@@ -1,3 +1,9 @@
+// Данные проекта Supabase. Эти два значения публичные, их можно хранить на сайте.
+// Секретный ключ (secret / service_role) сюда НЕ вставлять.
+window.CLUB_CONFIG = {
+  SUPABASE_URL: "https://mfqpbtepydexmgzvlpvk.supabase.co",
+  SUPABASE_KEY: "sb_publishable_fsruQHp_GpTdmruqfTqhag_h1vt7CEu"
+};
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -14,10 +20,1110 @@
 </head>
 <body>
 <header class="top">
-  <div class="wrap">
+  <div class="wrap"><!DOCTYPE html>/* Общие помощники для сайта клуба и админки */-- =====================================================================
+--  Компьютерный клуб: база данных для Supabase
+--  Вставьте весь файл в Supabase → SQL Editor → Run. Повторный запуск безопасен
+--  только на пустой базе (таблицы создаются один раз).
+-- =====================================================================
+
+create extension if not exists btree_gist;
+
+-- ---------- Настройки клуба (одна строка) ----------
+create table public.club_settings (
+  id             int primary key default 1 check (id = 1),
+  name           text not null default 'Respawn' check (length(name) between 1 and 40),
+  address        text not null default '',
+  phone          text not null default '',
+  hours          text not null default 'Круглосуточно',
+  night_from     int  not null default 22 check (night_from between 0 and 23),
+  night_to       int  not null default 8  check (night_to between 0 and 23),
+  tz             text not null default 'Asia/Almaty',
+  max_days_ahead int  not null default 7 check (max_days_ahead between 1 and 60),
+  updated_at     timestamptz not null default now()
+);
+insert into public.club_settings (id, name, address, phone)
+values (1, 'Respawn', 'Алматы, пр. Абая 150, 2 этаж', '+7 700 555 00 77');
+
+-- ---------- Зоны ----------
+create table public.club_zones (
+  id     text primary key check (id ~ '^[a-z0-9_]{1,24}$'),
+  name   text not null check (length(name) between 1 and 30),
+  kind   text not null default 'standard' check (kind in ('standard','vip','bootcamp','console','other')),
+  color  text not null default '#3ED3E6' check (color ~ '^#[0-9A-Fa-f]{6}$'),
+  seats  int  not null check (seats between 1 and 200),
+  cols   int  not null default 5 check (cols between 1 and 12),
+  price  int  not null check (price >= 0),
+  night  int  not null check (night >= 0),
+  specs  text not null default '' check (length(specs) <= 200),
+  sort   int  not null default 0,
+  active boolean not null default true
+);
+insert into public.club_zones (id, name, kind, color, seats, cols, price, night, specs, sort) values
+ ('std',  'Стандарт',      'standard', '#3ED3E6', 20, 5, 800,  600,  'RTX 4060, Ryzen 5 7500F, 165 Гц, HyperX Cloud II', 1),
+ ('vipa', 'VIP Alpha',     'vip',      '#F4B740', 5,  5, 1500, 1100, 'RTX 4070 Super, 240 Гц, кресла DXRacer, отдельная комната', 2),
+ ('vipo', 'VIP Omega',     'vip',      '#FF9F43', 5,  5, 1500, 1100, 'RTX 4070 Super, 240 Гц, свой кондиционер, отдельная комната', 3),
+ ('boot', 'Буткемп',       'bootcamp', '#FF5C93', 5,  5, 2000, 1500, 'RTX 4080 Super, 360 Гц, комната на команду 5×5, ТВ для разборов', 4),
+ ('ps5',  'PlayStation 5', 'console',  '#8C7CFF', 3,  3, 1800, 1300, 'PS5, ТВ 65″, 2 геймпада', 5);
+
+-- ---------- Сотрудники и смены ----------
+create table public.club_staff (
+  id         uuid primary key default gen_random_uuid(),
+  name       text not null check (length(name) between 1 and 30),
+  phone      text not null default '',
+  color      text not null default '#3ED3E6' check (color ~ '^#[0-9A-Fa-f]{6}$'),
+  active     boolean not null default true,
+  created_at timestamptz not null default now()
+);
+insert into public.club_staff (name, color) values ('Айгерим', '#3ED3E6'), ('Дана', '#FF5C93');
+
+create table public.club_shifts (
+  day      date not null,
+  part     text not null check (part in ('day','night')),   -- день 08–20, ночь 20–08
+  staff_id uuid references public.club_staff(id) on delete set null,
+  primary key (day, part)
+);
+
+-- ---------- Брони ----------
+create table public.club_bookings (
+  id           uuid primary key default gen_random_uuid(),
+  code         text not null unique,
+  name         text not null check (length(name) between 1 and 60),
+  phone        text not null default '',
+  zone_id      text not null references public.club_zones(id) on update cascade,
+  seats        int[] not null check (cardinality(seats) between 1 and 200),
+  start_at     timestamptz not null,
+  hours        int not null check (hours between 1 and 24),
+  total        int not null check (total >= 0),
+  status       text not null default 'booked' check (status in ('booked','arrived','done','cancelled','noshow')),
+  source       text not null default 'site' check (source in ('site','admin','walkin')),
+  comment      text not null default '' check (length(comment) <= 300),
+  cancel_token uuid not null default gen_random_uuid(),
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+create index club_bookings_start_idx on public.club_bookings (start_at);
+create index club_bookings_phone_idx on public.club_bookings (phone);
+
+-- Занятость мест. Ограничение запрещает двум броням пересекаться на одном месте.
+create table public.club_booking_seats (
+  booking_id uuid not null references public.club_bookings(id) on delete cascade,
+  zone_id    text not null,
+  seat       int  not null,
+  period     tstzrange not null,
+  primary key (booking_id, seat),
+  constraint club_no_double_booking exclude using gist (zone_id with =, seat with =, period with &&)
+);
+create index club_booking_seats_period_idx on public.club_booking_seats using gist (period);
+
+-- Места на обслуживании
+create table public.club_repairs (
+  zone_id    text not null references public.club_zones(id) on update cascade on delete cascade,
+  seat       int  not null,
+  note       text not null default '',
+  created_at timestamptz not null default now(),
+  primary key (zone_id, seat)
+);
+
+-- Администраторы (пользователи Supabase Auth)
+create table public.club_admins (
+  user_id    uuid primary key references auth.users(id) on delete cascade,
+  email      text,
+  created_at timestamptz not null default now()
+);
+
+-- =====================================================================
+--  Функции
+-- =====================================================================
+create or replace function public.club_is_admin() returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.club_admins where user_id = auth.uid());
+$$;
+
+create or replace function public.club_is_night(p_hour int, s public.club_settings) returns boolean
+language sql immutable as $$
+  select case when s.night_from > s.night_to then p_hour >= s.night_from or p_hour < s.night_to
+              else p_hour >= s.night_from and p_hour < s.night_to end;
+$$;
+
+create or replace function public.club_calc_total(z public.club_zones, p_start timestamptz, p_hours int, p_count int, s public.club_settings)
+returns int language plpgsql stable as $$
+declare t int := 0; i int; h int;
+begin
+  for i in 0 .. p_hours - 1 loop
+    h := extract(hour from (p_start + make_interval(hours => i)) at time zone s.tz)::int;
+    t := t + case when public.club_is_night(h, s) then z.night else z.price end;
+  end loop;
+  return t * p_count;
+end $$;
+
+-- Синхронизация занятых мест при любом изменении брони
+create or replace function public.club_sync_seats() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_max int; v_end timestamptz;
+begin
+  select seats into v_max from public.club_zones where id = new.zone_id;
+  if exists (select 1 from unnest(new.seats) s where s < 1 or s > v_max) then
+    raise exception 'seat_out_of_range' using errcode = 'P0001';
+  end if;
+  if (select count(distinct s) from unnest(new.seats) s) <> cardinality(new.seats) then
+    raise exception 'duplicate_seat' using errcode = 'P0001';
+  end if;
+  delete from public.club_booking_seats where booking_id = new.id;
+  v_end := new.start_at + make_interval(hours => new.hours);
+  if new.status = 'done' and v_end > now() then v_end := greatest(now(), new.start_at); end if;
+  if new.status in ('booked','arrived','done') and v_end > new.start_at then
+    insert into public.club_booking_seats (booking_id, zone_id, seat, period)
+    select new.id, new.zone_id, s, tstzrange(new.start_at, v_end, '[)') from unnest(new.seats) s;
+  end if;
+  return null;
+end $$;
+
+create or replace function public.club_touch() returns trigger language plpgsql as $$
+begin new.updated_at := now(); return new; end $$;
+
+create trigger club_bookings_touch before update on public.club_bookings
+  for each row execute function public.club_touch();
+create trigger club_bookings_sync after insert or update of status, seats, start_at, hours, zone_id on public.club_bookings
+  for each row execute function public.club_sync_seats();
+
+-- Кто сейчас на смене (по времени клуба)
+create or replace function public.club_current_shift(s public.club_settings, p_now timestamptz)
+returns table (day date, part text) language plpgsql stable as $$
+declare l timestamp := p_now at time zone s.tz; h int := extract(hour from l)::int;
+begin
+  if h >= 8 and h < 20 then day := l::date; part := 'day';
+  elsif h >= 20 then day := l::date; part := 'night';
+  else day := l::date - 1; part := 'night'; end if;
+  return next;
+end $$;
+
+-- Всё, что видит гость: зоны, цены, занятость (без имён и телефонов), кто на смене
+create or replace function public.club_public_state() returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare s public.club_settings; v_now timestamptz := now(); v_staff text;
+begin
+  select * into s from public.club_settings where id = 1;
+  select st.name into v_staff
+    from public.club_current_shift(s, v_now) c
+    join public.club_shifts sh on sh.day = c.day and sh.part = c.part
+    join public.club_staff st on st.id = sh.staff_id;
+  return jsonb_build_object(
+    'now', v_now,
+    'settings', jsonb_build_object('name', s.name, 'address', s.address, 'phone', s.phone, 'hours', s.hours,
+                                   'night_from', s.night_from, 'night_to', s.night_to, 'tz', s.tz, 'max_days_ahead', s.max_days_ahead),
+    'zones', coalesce((select jsonb_agg(jsonb_build_object('id', id, 'name', name, 'kind', kind, 'color', color, 'seats', seats,
+                                   'cols', cols, 'price', price, 'night', night, 'specs', specs) order by sort, name)
+                       from public.club_zones where active), '[]'::jsonb),
+    'shift', v_staff,
+    'busy', coalesce((select jsonb_agg(jsonb_build_array(zone_id, seat, lower(period), upper(period)))
+                      from public.club_booking_seats
+                      where upper(period) > v_now and lower(period) < v_now + make_interval(days => s.max_days_ahead + 1)), '[]'::jsonb),
+    'repairs', coalesce((select jsonb_agg(jsonb_build_array(zone_id, seat)) from public.club_repairs), '[]'::jsonb)
+  );
+end $$;
+
+-- Бронь с сайта. Цена и проверки считаются на сервере.
+create or replace function public.club_create_booking(p_zone text, p_seats int[], p_start timestamptz, p_hours int, p_name text, p_phone text)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare
+  s public.club_settings; z public.club_zones;
+  v_digits text; v_phone text; v_total int; v_code text; v_id uuid; v_token uuid; v_active int;
+  v_abc text := 'ABCDEFHKMNPRSTXZ';
+begin
+  select * into s from public.club_settings where id = 1;
+  select * into z from public.club_zones where id = p_zone and active;
+  if z.id is null then raise exception 'zone_not_found' using errcode = 'P0001'; end if;
+
+  p_name := btrim(coalesce(p_name, ''));
+  if length(p_name) < 2 or length(p_name) > 40 then raise exception 'bad_name' using errcode = 'P0001'; end if;
+  v_digits := regexp_replace(coalesce(p_phone, ''), '\D', '', 'g');
+  if length(v_digits) <> 11 then raise exception 'bad_phone' using errcode = 'P0001'; end if;
+  v_phone := '+' || substr(v_digits,1,1) || ' ' || substr(v_digits,2,3) || ' ' || substr(v_digits,5,3) || ' ' || substr(v_digits,8,2) || ' ' || substr(v_digits,10,2);
+  if p_hours is null or p_hours < 1 or p_hours > 12 then raise exception 'bad_hours' using errcode = 'P0001'; end if;
+  if p_seats is null or cardinality(p_seats) < 1 or cardinality(p_seats) > z.seats
+     or exists (select 1 from unnest(p_seats) x where x is null or x < 1 or x > z.seats)
+     or (select count(distinct x) from unnest(p_seats) x) <> cardinality(p_seats) then
+    raise exception 'bad_seats' using errcode = 'P0001';
+  end if;
+  if p_start is null or p_start < now() - interval '15 minutes' or p_start > now() + make_interval(days => s.max_days_ahead + 1) then
+    raise exception 'bad_time' using errcode = 'P0001';
+  end if;
+  if exists (select 1 from public.club_repairs r where r.zone_id = z.id and r.seat = any(p_seats)) then
+    raise exception 'seat_taken' using errcode = 'P0001';
+  end if;
+  -- защита от спама: не больше 3 активных будущих броней на один номер
+  select count(*) into v_active from public.club_bookings
+   where phone = v_phone and status = 'booked' and start_at + make_interval(hours => hours) > now();
+  if v_active >= 3 then raise exception 'too_many' using errcode = 'P0001'; end if;
+
+  v_total := public.club_calc_total(z, p_start, p_hours, cardinality(p_seats), s);
+  loop
+    v_code := substr(v_abc, 1 + floor(random() * 16)::int, 1) || substr(v_abc, 1 + floor(random() * 16)::int, 1)
+              || '-' || (1000 + floor(random() * 9000)::int)::text;
+    exit when not exists (select 1 from public.club_bookings where code = v_code);
+  end loop;
+
+  begin
+    insert into public.club_bookings (code, name, phone, zone_id, seats, start_at, hours, total, status, source)
+    values (v_code, p_name, v_phone, z.id, p_seats, p_start, p_hours, v_total, 'booked', 'site')
+    returning id, cancel_token into v_id, v_token;
+  exception when exclusion_violation then
+    raise exception 'seat_taken' using errcode = 'P0001';
+  end;
+  return jsonb_build_object('id', v_id, 'token', v_token, 'code', v_code, 'total', v_total);
+end $$;
+
+-- Гость отменяет свою бронь (нужен секретный токен, который есть только на его телефоне)
+create or replace function public.club_cancel_booking(p_id uuid, p_token uuid) returns boolean
+language plpgsql volatile security definer set search_path = public as $$
+declare n int;
+begin
+  update public.club_bookings set status = 'cancelled'
+   where id = p_id and cancel_token = p_token and status = 'booked' and start_at > now();
+  get diagnostics n = row_count;
+  return n > 0;
+end $$;
+
+-- Гость смотрит свои брони
+create or replace function public.club_my_bookings(p_ids uuid[], p_tokens uuid[]) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(jsonb_build_object(
+           'id', b.id, 'code', b.code, 'zone', z.name, 'seats', b.seats, 'start_at', b.start_at, 'hours', b.hours, 'total', b.total,
+           'status', case when b.status in ('booked','arrived') and b.start_at + make_interval(hours => b.hours) < now() then 'done' else b.status end)
+         order by b.start_at desc), '[]'::jsonb)
+  from unnest(p_ids, p_tokens) t(id, tok)
+  join public.club_bookings b on b.id = t.id and b.cancel_token = t.tok
+  join public.club_zones z on z.id = b.zone_id;
+$$;
+
+-- =====================================================================
+--  Доступы (RLS)
+-- =====================================================================
+alter table public.club_settings      enable row level security;
+alter table public.club_zones         enable row level security;
+alter table public.club_staff         enable row level security;
+alter table public.club_shifts        enable row level security;
+alter table public.club_bookings      enable row level security;
+alter table public.club_booking_seats enable row level security;
+alter table public.club_repairs       enable row level security;
+alter table public.club_admins        enable row level security;
+
+create policy settings_read  on public.club_settings for select to anon, authenticated using (true);
+create policy settings_admin on public.club_settings for update to authenticated using (public.club_is_admin()) with check (public.club_is_admin());
+
+create policy zones_read  on public.club_zones for select to anon, authenticated using (true);
+create policy zones_admin on public.club_zones for all to authenticated using (public.club_is_admin()) with check (public.club_is_admin());
+
+create policy staff_admin    on public.club_staff         for all to authenticated using (public.club_is_admin()) with check (public.club_is_admin());
+create policy shifts_admin   on public.club_shifts        for all to authenticated using (public.club_is_admin()) with check (public.club_is_admin());
+create policy bookings_admin on public.club_bookings      for all to authenticated using (public.club_is_admin()) with check (public.club_is_admin());
+create policy seats_admin    on public.club_booking_seats for select to authenticated using (public.club_is_admin());
+create policy repairs_admin  on public.club_repairs       for all to authenticated using (public.club_is_admin()) with check (public.club_is_admin());
+create policy admins_self    on public.club_admins        for select to authenticated using (user_id = auth.uid());
+
+grant select on public.club_settings, public.club_zones to anon;
+grant select, insert, update, delete on public.club_settings, public.club_zones, public.club_staff, public.club_shifts,
+  public.club_bookings, public.club_repairs to authenticated;
+grant select on public.club_booking_seats, public.club_admins to authenticated;
+
+revoke execute on function public.club_is_admin(), public.club_is_night(int, public.club_settings),
+  public.club_calc_total(public.club_zones, timestamptz, int, int, public.club_settings), public.club_sync_seats(), public.club_touch(),
+  public.club_current_shift(public.club_settings, timestamptz), public.club_public_state(),
+  public.club_create_booking(text, int[], timestamptz, int, text, text), public.club_cancel_booking(uuid, uuid),
+  public.club_my_bookings(uuid[], uuid[]) from public, anon, authenticated;
+grant execute on function public.club_public_state()                                         to anon, authenticated;
+grant execute on function public.club_create_booking(text, int[], timestamptz, int, text, text) to anon, authenticated;
+grant execute on function public.club_cancel_booking(uuid, uuid)                             to anon, authenticated;
+grant execute on function public.club_my_bookings(uuid[], uuid[])                            to anon, authenticated;
+grant execute on function public.club_is_admin()                                             to anon, authenticated;
+
+-- Мгновенные уведомления о новых бронях в админке
+do $$ begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    alter publication supabase_realtime add table public.club_bookings;
+  end if;
+end $$;
+
+(function(){
+"use strict";
+const HOUR = 3600e3, DAY = 24*HOUR;
+const KIND = {standard:{n:"Стандарт",c:"#3ED3E6"},vip:{n:"VIP",c:"#F4B740"},bootcamp:{n:"Буткемп",c:"#FF5C93"},console:{n:"Консоли",c:"#8C7CFF"},other:{n:"Другое",c:"#5BE39B"}};
+const STATUS = {
+  booked:{n:"Забронировано",c:"#3ED3E6"},
+  arrived:{n:"Пришёл, играет",c:"#5BE39B"},
+  done:{n:"Завершено",c:"#9A9ECB"},
+  cancelled:{n:"Отменено",c:"#FF5C6C"},
+  noshow:{n:"Не пришёл",c:"#F4B740"}
+};
+const WD = ["вс","пн","вт","ср","чт","пт","сб"];
+const MON = ["янв","фев","мар","апр","мая","июн","июл","авг","сен","окт","ноя","дек"];
+const $ = (s,r=document)=>r.querySelector(s);
+const $$ = (s,r=document)=>Array.from(r.querySelectorAll(s));
+const esc = s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const money = n=>Math.round(n||0).toLocaleString("ru-RU").replace(/[\s,]/g," ")+" ₸";
+const pad = n=>String(n).padStart(2,"0");
+const dayStart = t=>{const d=new Date(t);d.setHours(0,0,0,0);return d.getTime()};
+const dayKey = t=>{const d=new Date(t);return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())};
+const keyToTs = k=>{const [y,m,d]=k.split("-").map(Number);return new Date(y,m-1,d).getTime()};
+const hm = t=>{const d=new Date(t);return pad(d.getHours())+":"+pad(d.getMinutes())};
+const dLabel = t=>{const d=new Date(t);const today=dayStart(Date.now());const ds=dayStart(t);
+  if(ds===today) return "сегодня"; if(ds===today+DAY) return "завтра"; if(ds===today-DAY) return "вчера";
+  return d.getDate()+" "+MON[d.getMonth()]+", "+WD[d.getDay()]};
+const plural=(n,a,b,c)=>{n=Math.abs(n)%100;const n1=n%10;if(n>10&&n<20)return c;if(n1>1&&n1<5)return b;if(n1===1)return a;return c};
+function normPhone(v){let d=String(v||"").replace(/\D/g,"");if(d.length===12&&d[0]==="7")d="7"+d.slice(2);if(d.length===11&&d[0]==="8")d="7"+d.slice(1);if(d.length===10)d="7"+d;if(d.length!==11)return null;return "+"+d[0]+" "+d.slice(1,4)+" "+d.slice(4,7)+" "+d.slice(7,9)+" "+d.slice(9,11)}
+function hourIn(ts,tz){try{return +new Intl.DateTimeFormat("en-GB",{hour:"numeric",hourCycle:"h23",timeZone:tz||"Asia/Almaty"}).format(new Date(ts))}catch(e){return new Date(ts).getHours()}}
+function isNight(h,club){const f=club.nightFrom,t=club.nightTo;return f>t?(h>=f||h<t):(h>=f&&h<t)}
+function calcPrice(zone,start,hours,count,club){
+  let sum=0,nH=0,dH=0;
+  for(let h=0;h<hours;h++){const hr=hourIn(start+h*HOUR,club.tz);if(isNight(hr,club)){sum+=zone.night;nH++}else{sum+=zone.price;dH++}}
+  return {total:sum*count,nH,dH};
+}
+function mkCode(){const a="ABCDEFHKMNPRSTXZ";return a[Math.floor(Math.random()*a.length)]+a[Math.floor(Math.random()*a.length)]+"-"+(1000+Math.floor(Math.random()*9000))}
+
+/* storage that never throws */
+const mem={};
+const store={get(k){try{return localStorage.getItem(k)}catch(e){return mem[k]??null}},set(k,v){try{localStorage.setItem(k,v)}catch(e){mem[k]=v}}};
+
+/* modal + toast */
+function openModal(html,onMount){
+  const root=$("#modalRoot"); root.innerHTML=`<div class="modal" role="dialog" aria-modal="true"><div class="box">${html}</div></div>`;
+  const m=root.firstChild; m.addEventListener("click",e=>{if(e.target===m||e.target.closest("[data-close]"))closeModal()});
+  document.addEventListener("keydown",escClose); if(onMount) onMount(m);
+  const f=m.querySelector("input,select,button"); if(f) f.focus();
+}
+function escClose(e){if(e.key==="Escape")closeModal()}
+function closeModal(){$("#modalRoot").innerHTML="";document.removeEventListener("keydown",escClose)}
+const modalOpen=()=>!!$("#modalRoot").innerHTML;
+function confirmModal(title,text,okLabel,onOk){
+  openModal(`<h3 style="font-family:var(--display);margin:0 0 8px">${esc(title)}</h3><p class="muted">${esc(text)}</p><div class="row mt"><button class="btn ghost" data-close type="button">Назад</button><button class="btn danger" id="okBtn" type="button">${esc(okLabel)}</button></div>`,
+    m=>m.querySelector("#okBtn").addEventListener("click",()=>{closeModal();onOk()}));
+}
+let toastT; function toast(t){let el=$(".toast");if(!el){el=document.createElement("div");el.className="toast";el.setAttribute("role","status");document.body.appendChild(el)}el.textContent=t;clearTimeout(toastT);toastT=setTimeout(()=>el.remove(),3200)}
+
+/* Supabase */
+const cfg=window.CLUB_CONFIG||{};
+const configured=!!(cfg.SUPABASE_URL&&cfg.SUPABASE_KEY&&window.supabase);
+const sb=configured? window.supabase.createClient(cfg.SUPABASE_URL,cfg.SUPABASE_KEY,{auth:{persistSession:true,autoRefreshToken:true}}) : null;
+
+const ERR={
+  seat_taken:"Эти места только что заняли. Выберите другие.",
+  bad_phone:"Укажите телефон полностью, например +7 701 123 45 67.",
+  bad_name:"Укажите имя, на которое оформить бронь.",
+  bad_time:"Это время уже прошло или слишком далеко. Выберите другое.",
+  bad_hours:"Можно забронировать от 1 до 12 часов.",
+  bad_seats:"Выберите места на карте заново.",
+  too_many:"На этот номер уже 3 активные брони. Отмените лишнюю или позвоните в клуб.",
+  zone_not_found:"Эта зона больше недоступна. Обновите страницу.",
+  seat_out_of_range:"Такого места в зоне нет.",
+  duplicate_seat:"Место выбрано дважды."
+};
+function errText(e){
+  const m=(e&&(e.message||e.details||e.hint))||String(e||"");
+  for(const k in ERR) if(m.includes(k)) return ERR[k];
+  if(e&&e.code==="23P01"||/exclusion constraint/.test(m)) return "На это время место уже занято.";
+  if(/Failed to fetch|NetworkError|network/i.test(m)) return "Нет связи с сервером. Проверьте интернет и попробуйте ещё раз.";
+  if(/JWT|permission denied|row-level security/i.test(m)) return "Нет прав на это действие. Войдите заново.";
+  return "Не получилось: "+m;
+}
+
+window.Club={HOUR,DAY,KIND,STATUS,WD,MON,$,$$,esc,money,pad,dayStart,dayKey,keyToTs,hm,dLabel,plural,normPhone,hourIn,isNight,calcPrice,mkCode,store,openModal,closeModal,modalOpen,confirmModal,toast,sb,configured,errText};
+})();
+
+:root{
+  color-scheme: dark;
+  --bg:#13142B; --bg-2:#181A36; --panel:#1C1E3D; --panel-2:#24274D; --line:#30346A; --line-2:#3E4380;
+  --text:#ECEDFB; --muted:#9A9ECB; --dim:#6B6F9E;
+  --std:#3ED3E6; --vip:#F4B740; --boot:#FF5C93; --console:#8C7CFF; --other:#5BE39B;
+  --ok:#5BE39B; --warn:#F4B740; --bad:#FF5C6C;
+  --accent:var(--std);
+  --r-lg:22px; --r-md:14px; --r-sm:9px;
+  --display:"Unbounded","Arial Black",system-ui,sans-serif;
+  --body:"Manrope",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){ --bg:#13142B; --text:#ECEDFB; } }
+:root[data-theme="dark"]{ --bg:#13142B; --text:#ECEDFB; }
+*,*::before,*::after{box-sizing:inherit}
+html{scroll-padding-top:env(safe-area-inset-top,0px);-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--body);font-size:16px;line-height:1.5;min-height:100vh;
+  background-image:radial-gradient(1200px 600px at 85% -10%, rgba(62,211,230,.10), transparent 60%),radial-gradient(900px 500px at -10% 30%, rgba(140,124,255,.10), transparent 60%);
+  background-attachment:fixed}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:rgba(19,20,43,.85);backdrop-filter:blur(14px)}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+img{max-width:100%}
+a{color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+.wrap{max-width:1180px;margin:0 auto;padding:0 20px}
+.hidden{display:none!important}
+.muted{color:var(--muted)}
+.num{font-variant-numeric:tabular-nums}
+@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+
+/* top bar */
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:rgba(19,20,43,.82);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+.top .wrap{display:flex;align-items:center;gap:16px;height:64px}
+.logo{font-family:var(--display);font-weight:800;font-size:20px;letter-spacing:.02em;display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--text)}
+.logo i{width:12px;height:12px;border-radius:3px;background:var(--std);box-shadow:0 0 14px var(--std);display:inline-block}
+.top .grow{flex:1}
+.shift-pill{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--muted);background:var(--panel);border:1px solid var(--line);padding:6px 12px;border-radius:999px;white-space:nowrap}
+.shift-pill b{color:var(--text);font-weight:700}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 8px var(--ok);flex:none}
+.dot.live{animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+/* hero */
+.hero{padding:44px 0 28px}
+.hero h1{font-family:var(--display);font-weight:800;font-size:clamp(34px,6vw,64px);line-height:1.02;margin:0 0 12px;letter-spacing:-.01em}
+.hero p.lead{color:var(--muted);font-size:18px;max-width:58ch;margin:0 0 28px}
+.strips{display:grid;gap:14px}
+.strip{display:grid;grid-template-columns:minmax(150px,220px) minmax(0,1fr) auto;align-items:center;gap:18px;background:linear-gradient(90deg,var(--panel),rgba(28,30,61,.4));border:1px solid var(--line);border-radius:var(--r-md);padding:14px 18px;text-align:left;width:100%;transition:border-color .2s, transform .2s}
+.strip:hover{border-color:var(--zc)}
+.strip .zname{font-weight:800;font-size:16px;display:flex;align-items:center;gap:10px}
+.strip .zname small{display:block;font-weight:500;color:var(--muted);font-size:13px}
+.leds{display:flex;flex-wrap:wrap;gap:5px}
+.led{width:14px;height:10px;border-radius:2px;background:#2A2D57}
+.led.on{background:var(--zc);box-shadow:0 0 8px var(--zc)}
+.led.rep{background:repeating-linear-gradient(45deg,#3a2a3a 0 3px,#2A2D57 3px 6px)}
+.strip .cnt{font-family:var(--display);font-weight:700;font-size:22px;white-space:nowrap}
+.strip .cnt small{font-family:var(--body);font-size:13px;color:var(--muted);font-weight:600;margin-left:4px}
+@media (max-width:640px){.strip{grid-template-columns:minmax(0,1fr) auto}.strip .leds{grid-column:1/-1;order:3}}
+
+/* sections */
+section.block{padding:30px 0}
+h2.h{font-family:var(--display);font-weight:700;font-size:clamp(22px,3vw,30px);margin:0 0 6px}
+.sub{color:var(--muted);margin:0 0 22px}
+
+/* booking */
+.book{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:22px;align-items:start}
+@media (max-width:960px){.book{grid-template-columns:minmax(0,1fr)}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);padding:20px}
+.field-label{font-size:13px;font-weight:700;color:var(--muted);margin:0 0 8px;display:block}
+.chips{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;scrollbar-width:thin}
+.chip{flex:none;background:var(--bg-2);border:1px solid var(--line);border-radius:12px;padding:9px 14px;font-weight:700;font-size:14px;display:flex;align-items:center;gap:8px;transition:all .15s}
+.chip small{font-weight:500;color:var(--muted)}
+.chip[aria-pressed="true"]{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 16%,var(--bg-2));box-shadow:0 0 0 1px var(--accent) inset}
+.chip .sw{width:10px;height:10px;border-radius:3px}
+.date-chip{flex-direction:column;gap:0;min-width:64px;padding:8px 10px;line-height:1.2}
+.date-chip b{font-size:18px;font-family:var(--display)}
+.row{display:flex;gap:16px;flex-wrap:wrap}
+.row>*{flex:1;min-width:150px}
+.mt{margin-top:18px}
+select,input[type=text],input[type=tel],input[type=number],input[type=password],input[type=date],textarea{width:100%;background:var(--bg-2);border:1px solid var(--line);border-radius:12px;padding:11px 13px;outline:none;transition:border-color .15s}
+select:focus,input:focus,textarea:focus{border-color:var(--accent)}
+.stepper{display:flex;align-items:center;background:var(--bg-2);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.stepper button{background:none;border:0;width:44px;height:44px;font-size:20px;font-weight:700;color:var(--muted)}
+.stepper button:hover{color:var(--text);background:var(--panel-2)}
+.stepper output{flex:1;text-align:center;font-weight:800;font-size:16px}
+
+/* seat map */
+.map{background:var(--bg-2);border:1px solid var(--line);border-radius:var(--r-md);padding:16px;overflow-x:auto}
+.map-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+.legend{display:flex;gap:14px;font-size:13px;color:var(--muted);flex-wrap:wrap}
+.legend span{display:flex;align-items:center;gap:6px}
+.legend i{width:14px;height:10px;border-radius:2px;display:inline-block}
+.seats{display:grid;gap:10px;grid-template-columns:repeat(var(--cols,5),minmax(54px,1fr));min-width:max-content}
+.seat{position:relative;border:0;background:none;padding:0;display:flex;flex-direction:column;align-items:center;gap:5px;color:var(--muted);font-size:12px;font-weight:700}
+.seat .scr{width:100%;min-width:54px;aspect-ratio:16/10;border-radius:7px;border:1.5px solid var(--zc);background:color-mix(in srgb,var(--zc) 10%,transparent);display:grid;place-items:center;font-family:var(--display);font-size:13px;color:var(--text);transition:all .15s}
+.seat .stand{width:30%;height:4px;border-radius:2px;background:var(--line-2)}
+.seat.free:hover .scr{background:color-mix(in srgb,var(--zc) 28%,transparent);box-shadow:0 0 14px color-mix(in srgb,var(--zc) 60%,transparent)}
+.seat.sel .scr{background:var(--zc);color:#14152E;box-shadow:0 0 18px var(--zc)}
+.seat.busy .scr{border-color:var(--line);background:repeating-linear-gradient(135deg,#22254a 0 6px,#1d1f40 6px 12px);color:var(--dim)}
+.seat.rep .scr{border-color:#5a3346;background:#26172a;color:#a0607a}
+.seat.busy,.seat.rep{cursor:not-allowed}
+.admin .seat.busy,.admin .seat.rep{cursor:pointer}
+.seat .who{position:absolute;top:-6px;right:-6px;background:var(--panel-2);border:1px solid var(--line-2);border-radius:6px;font-size:10px;padding:0 4px;color:var(--text)}
+.zone-specs{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.spec{font-size:13px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px 10px;color:var(--muted)}
+
+/* summary */
+.summary{position:sticky;top:calc(80px + env(safe-area-inset-top,0px))}
+.sum-line{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px dashed var(--line);font-size:15px}
+.sum-line span:first-child{color:var(--muted)}
+.total{display:flex;justify-content:space-between;align-items:baseline;margin:16px 0}
+.total b{font-family:var(--display);font-size:30px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:14px;padding:13px 20px;font-weight:800;font-size:15px;background:var(--accent);color:#14152E;transition:filter .15s, transform .1s}
+.btn:hover{filter:brightness(1.1)}
+.btn:active{transform:translateY(1px)}
+.btn:disabled{opacity:.45;cursor:not-allowed;filter:none}
+.btn.block{width:100%}
+.btn.ghost{background:var(--panel-2);color:var(--text);border:1px solid var(--line-2)}
+.btn.danger{background:transparent;color:var(--bad);border:1px solid color-mix(in srgb,var(--bad) 50%,transparent)}
+.btn.sm{padding:8px 12px;font-size:13px;border-radius:10px}
+.err{color:var(--bad);font-size:13px;margin-top:8px;min-height:1em}
+.sel-list{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 4px}
+.sel-list span{background:var(--bg-2);border:1px solid var(--accent);border-radius:7px;padding:2px 8px;font-size:13px;font-weight:700}
+
+/* zones info */
+.zones-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px}
+.zcard{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);padding:20px;position:relative;overflow:hidden}
+.zcard::before{content:"";position:absolute;inset:0 0 auto;height:3px;background:var(--zc);box-shadow:0 0 16px var(--zc)}
+.zcard h3{font-family:var(--display);font-size:18px;margin:4px 0 6px}
+.zcard .price{font-size:26px;font-weight:800;font-family:var(--display);margin:12px 0 2px}
+.zcard .price small{font-size:13px;font-family:var(--body);color:var(--muted);font-weight:600}
+
+/* my bookings */
+.mine{display:grid;gap:10px}
+.mine .item{display:flex;justify-content:space-between;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);padding:14px 16px;flex-wrap:wrap}
+footer{border-top:1px solid var(--line);margin-top:40px;padding:28px 0 40px;color:var(--muted);font-size:14px}
+footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+footer a{color:var(--muted)}
+
+/* modal */
+.modal{position:fixed;inset:0;z-index:50;background:rgba(8,9,24,.72);backdrop-filter:blur(6px);display:grid;place-items:center;padding:20px}
+.modal .box{background:var(--panel);border:1px solid var(--line-2);border-radius:var(--r-lg);padding:24px;width:min(460px,100%);max-height:90vh;overflow:auto;animation:pop .22s ease-out}
+@keyframes pop{from{transform:scale(.96);opacity:0}to{transform:none;opacity:1}}
+.code{font-family:var(--display);font-size:40px;letter-spacing:.06em;text-align:center;margin:10px 0;color:var(--accent);text-shadow:0 0 22px color-mix(in srgb,var(--accent) 60%,transparent)}
+.toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--panel-2);border:1px solid var(--line-2);border-radius:12px;padding:12px 18px;z-index:60;font-weight:700;box-shadow:0 10px 40px rgba(0,0,0,.4)}
+
+/* ===== ADMIN ===== */
+.admin-shell{display:grid;grid-template-columns:230px minmax(0,1fr);min-height:calc(100vh - 64px)}
+.side{border-right:1px solid var(--line);padding:18px 12px;display:flex;flex-direction:column;gap:4px;position:sticky;top:calc(64px + env(safe-area-inset-top,0px));height:calc(100vh - 64px - env(safe-area-inset-top,0px));overflow:auto}
+.side button{background:none;border:0;text-align:left;padding:11px 14px;border-radius:11px;font-weight:700;color:var(--muted);display:flex;align-items:center;gap:10px}
+.side button svg{width:18px;height:18px;flex:none}
+.side button:hover{background:var(--panel);color:var(--text)}
+.side button[aria-current="page"]{background:var(--panel-2);color:var(--text);box-shadow:inset 3px 0 0 var(--std)}
+.side .sp{flex:1}
+.main{padding:24px 26px 60px;min-width:0}
+@media (max-width:860px){
+  .admin-shell{grid-template-columns:minmax(0,1fr)}
+  .side{position:sticky;top:calc(64px + env(safe-area-inset-top,0px));height:auto;flex-direction:row;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line);background:rgba(19,20,43,.92);backdrop-filter:blur(12px);z-index:15;padding:8px}
+  .side button{white-space:nowrap;padding:9px 12px}
+  .side .sp{display:none}
+  .main{padding:18px 14px 60px}
+}
+.page-head{display:flex;justify-content:space-between;align-items:flex-end;gap:14px;flex-wrap:wrap;margin-bottom:20px}
+.page-head h2{font-family:var(--display);font-size:26px;margin:0}
+.seg{display:inline-flex;background:var(--bg-2);border:1px solid var(--line);border-radius:12px;padding:3px}
+.seg button{background:none;border:0;padding:7px 14px;border-radius:9px;font-weight:700;font-size:14px;color:var(--muted)}
+.seg button[aria-pressed="true"]{background:var(--panel-2);color:var(--text)}
+.kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px;margin-bottom:18px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);padding:16px 18px}
+.kpi span{font-size:13px;color:var(--muted);font-weight:700}
+.kpi b{display:block;font-family:var(--display);font-size:26px;margin-top:4px;white-space:nowrap}
+.kpi small{font-size:12.5px;font-weight:700}
+.up{color:var(--ok)}.down{color:var(--bad)}
+.grid2{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:16px}
+@media (max-width:1100px){.grid2{grid-template-columns:minmax(0,1fr)}}
+.chart{width:100%;height:240px;display:block}
+.chart text{fill:var(--dim);font-size:11px;font-family:var(--body)}
+.bar-row{display:grid;grid-template-columns:120px 1fr 90px;gap:10px;align-items:center;margin:10px 0;font-size:14px}
+.bar-row .track{height:10px;border-radius:5px;background:var(--bg-2);overflow:hidden}
+.bar-row .fill{height:100%;border-radius:5px}
+.bar-row b{text-align:right;font-variant-numeric:tabular-nums}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--r-md)}
+table{width:100%;border-collapse:collapse;font-size:14px;min-width:820px}
+th{text-align:left;font-size:12.5px;color:var(--muted);font-weight:700;padding:11px 12px;background:var(--bg-2);border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:11px 12px;border-bottom:1px solid var(--line);vertical-align:middle}
+tr:last-child td{border-bottom:0}
+tbody tr:hover{background:rgba(255,255,255,.02)}
+td select{padding:6px 8px;border-radius:8px;font-size:13px;width:auto}
+.badge{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:700;padding:3px 9px;border-radius:999px;background:var(--bg-2);border:1px solid var(--line);white-space:nowrap}
+.badge i{width:7px;height:7px;border-radius:50%}
+.filters{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;align-items:center}
+.filters>*,.filters input[type=date],.filters select{width:auto}
+.filters input[type=text]{min-width:220px;flex:1}
+.empty{padding:40px 20px;text-align:center;color:var(--muted)}
+
+/* shifts */
+.week{display:grid;grid-template-columns:110px repeat(7,minmax(118px,1fr));gap:8px;min-width:960px}
+.week .hd{font-size:13px;font-weight:700;color:var(--muted);padding:6px 4px}
+.week .hd b{display:block;color:var(--text);font-family:var(--display);font-size:16px}
+.week .hd.today b{color:var(--std)}
+.week .lbl{font-size:13px;font-weight:700;color:var(--muted);padding:10px 4px;display:flex;flex-direction:column;justify-content:center}
+.slot{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px;min-height:62px;display:flex;flex-direction:column;gap:6px}
+.slot.today{border-color:color-mix(in srgb,var(--std) 60%,var(--line))}
+.slot select{padding:7px 8px;font-size:13px;border-radius:9px}
+.slot .who{font-weight:800;font-size:14px;display:flex;align-items:center;gap:6px}
+.staff-list{display:grid;gap:8px}
+.staff{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.ava{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;font-weight:800;color:#14152E;flex:none}
+.staff .grow{flex:1;min-width:0}
+.staff small{color:var(--muted);display:block}
+
+/* zones edit */
+.zedit{display:grid;gap:14px}
+.zrow{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--zc);border-radius:var(--r-md);padding:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;align-items:end}
+.zrow label{font-size:12.5px;font-weight:700;color:var(--muted);display:grid;gap:6px}
+.zrow .wide{grid-column:span 2}
+@media (max-width:520px){.zrow .wide{grid-column:auto}}
+.zrow input[type=color]{width:100%;height:44px;padding:4px;border-radius:12px;background:var(--bg-2);border:1px solid var(--line)}
+
+/* hall popover */
+.seat-pop h4{font-family:var(--display);margin:0 0 6px;font-size:20px}
+.pop-actions{display:grid;gap:8px;margin-top:14px}
+.login{max-width:380px;margin:12vh auto;padding:0 20px}
+.login .card{padding:28px}
+.login h2{font-family:var(--display);margin:0 0 6px}
+.pin{letter-spacing:.5em;text-align:center;font-size:22px;font-weight:800}
+.note{font-size:13px;color:var(--muted);background:var(--bg-2);border:1px dashed var(--line-2);border-radius:12px;padding:10px 12px}
+
+.banner{background:color-mix(in srgb,var(--warn) 14%,var(--panel));border:1px solid color-mix(in srgb,var(--warn) 50%,transparent);border-radius:var(--r-md);padding:14px 16px;margin:16px 0}
+.skeleton{opacity:.5;pointer-events:none}
+.live-tag{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#13142B">
+<meta name="robots" content="noindex, nofollow">
+<title>Панель клуба</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛠️</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700;800&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap" style="max-width:none">
+    <span class="logo"><i></i><span id="clubName">Панель клуба</span></span>
+    <div class="grow"></div>
+    <span class="live-tag hidden" id="liveTag"><span class="dot live"></span>онлайн</span>
+  </div>
+</header>
+
+<div id="loginView" class="hidden">
+  <div class="login">
+    <div class="card">
+      <h2>Панель клуба</h2>
+      <p class="muted" style="margin:0 0 18px">Вход для администраторов.</p>
+      <label class="field-label" for="email">Email</label>
+      <input type="text" id="email" autocomplete="username" inputmode="email">
+      <label class="field-label mt" for="pass">Пароль</label>
+      <input type="password" id="pass" autocomplete="current-password">
+      <div class="err" id="loginErr" role="alert"></div>
+      <button class="btn block mt" id="loginBtn" type="button">Войти</button>
+    </div>
+  </div>
+</div>
+
+<div id="msgView" class="hidden"><div class="login"><div class="card"><h2 id="msgTitle"></h2><p class="muted" id="msgText"></p><button class="btn ghost block mt hidden" id="msgLogout" type="button">Выйти</button></div></div></div>
+
+<div id="admin" class="admin hidden">
+  <div class="admin-shell">
+    <nav class="side" id="side" aria-label="Разделы">
+      <button data-tab="overview" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Обзор и выручка</button>
+      <button data-tab="hall"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>Зал сейчас</button>
+      <button data-tab="bookings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>Брони</button>
+      <button data-tab="shifts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6M17 11h5M19.5 8.5v5"/></svg>Смены</button>
+      <button data-tab="zones"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="8" cy="8" r="1.5"/></svg>Зоны и цены</button>
+      <div class="sp"></div>
+      <button id="toSite"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>Сайт для клиентов</button>
+      <button id="logout"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>Выйти</button>
+    </nav>
+    <div class="main" id="adminMain"><div class="empty">Загружаем данные…</div></div>
+  </div>
+</div>
+<div id="modalRoot"></div>
+
+<script src="../config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="../assets/common.js"></script>
+<script>
+(function(){
+"use strict";
+const {HOUR,DAY,KIND,STATUS,WD,MON,$,$$,esc,money,pad,dayStart,dayKey,keyToTs,hm,dLabel,plural,normPhone,calcPrice,mkCode,openModal,closeModal,modalOpen,confirmModal,toast,sb,configured,errText}=Club;
+
+let S=null, me=null, loaded=false;
+const A={tab:"overview",period:"week",bDate:"today",bZone:"all",bStatus:"all",q:"",weekStart:null};
+
+/* ---------- views ---------- */
+function show(id){["#loginView","#msgView","#admin"].forEach(s=>$(s).classList.toggle("hidden",s!==id))}
+function message(title,text,canLogout){$("#msgTitle").textContent=title;$("#msgText").textContent=text;$("#msgLogout").classList.toggle("hidden",!canLogout);show("#msgView")}
+
+/* ---------- data ---------- */
+async function loadAll(){
+  const today=dayStart(Date.now());
+  const [st,zs,sf,sh,rp]=await Promise.all([
+    sb.from("club_settings").select("*").eq("id",1).single(),
+    sb.from("club_zones").select("*").order("sort").order("name"),
+    sb.from("club_staff").select("*").order("created_at"),
+    sb.from("club_shifts").select("*").gte("day",dayKey(today-75*DAY)),
+    sb.from("club_repairs").select("*")
+  ]);
+  const err=[st,zs,sf,sh,rp].find(r=>r.error); if(err) throw err.error;
+  const rows=[]; const since=new Date(today-62*DAY).toISOString();
+  for(let from=0;;from+=1000){
+    const {data,error}=await sb.from("club_bookings").select("*").gte("start_at",since).order("start_at").range(from,from+999);
+    if(error) throw error; rows.push(...data); if(data.length<1000) break;
+  }
+  const s=st.data;
+  const shifts={}; sh.data.forEach(r=>{(shifts[r.day]=shifts[r.day]||{})[r.part]=r.staff_id});
+  const manual={}; rp.data.forEach(r=>manual[r.zone_id+"-"+r.seat]={type:"repair",note:r.note});
+  S={club:{name:s.name,address:s.address,phone:s.phone,hours:s.hours,nightFrom:s.night_from,nightTo:s.night_to,tz:s.tz,maxDays:s.max_days_ahead},
+    allZones:zs.data, zones:zs.data.filter(z=>z.active), allStaff:sf.data, staff:sf.data.filter(x=>x.active), shifts, manual,
+    bookings:rows.map(b=>({id:b.id,code:b.code,name:b.name,phone:b.phone,zoneId:b.zone_id,seats:b.seats.map(n=>b.zone_id+"-"+n),
+      start:Date.parse(b.start_at),hours:b.hours,total:b.total,status:b.status,source:b.source,comment:b.comment,createdAt:Date.parse(b.created_at)}))};
+  loaded=true;
+}
+let reloadT=null;
+function scheduleReload(){clearTimeout(reloadT);reloadT=setTimeout(refresh,700)}
+async function refresh(){
+  try{await loadAll()}catch(e){toast(errText(e));return}
+  const a=document.activeElement;
+  if(a&&$("#adminMain").contains(a)&&/INPUT|SELECT|TEXTAREA/.test(a.tagName)) return; // не мешаем вводу
+  render();
+}
+async function act(q,okMsg){const {error}=await q;if(error){toast(errText(error));return false}if(okMsg)toast(okMsg);await refresh();return true}
+
+/* ---------- helpers ---------- */
+const zoneById=id=>S.allZones.find(z=>z.id===id);
+const seatIds=z=>Array.from({length:z.seats},(_,i)=>z.id+"-"+(i+1));
+const seatNum=id=>+id.split("-").pop();
+const zoneOfSeat=id=>id.slice(0,id.lastIndexOf("-"));
+const bEnd=b=>b.start+b.hours*HOUR;
+function statusOf(b){if((b.status==="booked"||b.status==="arrived")&&bEnd(b)<Date.now())return "done";return b.status}
+const isActive=b=>{const s=statusOf(b);return s==="booked"||s==="arrived"};
+const countsRevenue=b=>{const s=statusOf(b);return s==="booked"||s==="arrived"||s==="done"};
+function seatState(seatId,start,end){
+  const m=S.manual[seatId]; if(m) return {st:"rep",m};
+  const b=S.bookings.find(b=>isActive(b)&&b.seats.includes(seatId)&&b.start<end&&start<bEnd(b));
+  if(b) return {st:"busy",b};
+  return {st:"free"};
+}
+function freeNow(z){const n=Date.now();return seatIds(z).filter(id=>seatState(id,n,n+60e3).st==="free")}
+function shiftKeyFor(ts){const h=new Date(ts).getHours();if(h>=8&&h<20)return [dayKey(ts),"day"];if(h>=20)return [dayKey(ts),"night"];return [dayKey(ts-DAY),"night"]}
+function shiftNow(){const [k,p]=shiftKeyFor(Date.now());const sid=S.shifts[k]&&S.shifts[k][p];return S.allStaff.find(s=>s.id===sid)||null}
+const priceClub=()=>({tz:S.club.tz,nightFrom:S.club.nightFrom,nightTo:S.club.nightTo});
+const toRow=b=>({code:b.code,name:b.name,phone:b.phone||"",zone_id:b.zoneId,seats:b.seats.map(seatNum),start_at:new Date(b.start).toISOString(),hours:b.hours,total:b.total,status:b.status,source:b.source,comment:b.comment||""});
+
+/* ---------- auth ---------- */
+async function boot(){
+  if(!configured){message("Админка не подключена","Заполните config.js: адрес проекта Supabase и publishable key.",false);return}
+  const {data:{session}}=await sb.auth.getSession();
+  if(!session){show("#loginView");setTimeout(()=>$("#email").focus(),50);return}
+  me=session.user;
+  const {data:adm,error}=await sb.from("club_admins").select("user_id").eq("user_id",me.id).maybeSingle();
+  if(error){message("Не удалось проверить доступ",errText(error),true);return}
+  if(!adm){message("Нет доступа",`Аккаунт ${me.email} не является администратором клуба. Попросите владельца добавить его.`,true);return}
+  show("#admin");
+  try{await loadAll()}catch(e){message("Не удалось загрузить данные",errText(e),true);return}
+  render(); subscribe();
+}
+async function login(){
+  const email=$("#email").value.trim(),password=$("#pass").value;const err=$("#loginErr");err.textContent="";
+  if(!email||!password){err.textContent="Введите email и пароль.";return}
+  $("#loginBtn").disabled=true;$("#loginBtn").textContent="Входим…";
+  const {error}=await sb.auth.signInWithPassword({email,password});
+  $("#loginBtn").disabled=false;$("#loginBtn").textContent="Войти";
+  if(error){err.textContent=/Invalid login/i.test(error.message)?"Неверный email или пароль.":errText(error);return}
+  $("#pass").value=""; boot();
+}
+async function logout(){await sb.auth.signOut();location.reload()}
+let channel=null;
+function subscribe(){
+  if(channel) return;
+  channel=sb.channel("club-bookings").on("postgres_changes",{event:"*",schema:"public",table:"club_bookings"},p=>{
+    if(p.eventType==="INSERT"&&p.new&&p.new.source==="site"){const z=zoneById(p.new.zone_id);toast(`Новая бронь: ${p.new.name}, ${z?z.name:""}, ${p.new.seats.length} ${plural(p.new.seats.length,"место","места","мест")}`)}
+    scheduleReload();
+  }).subscribe(st=>{$("#liveTag").classList.toggle("hidden",st!=="SUBSCRIBED")});
+  setInterval(()=>{if(!modalOpen())refresh()},60e3);
+  document.addEventListener("visibilitychange",()=>{if(!document.hidden)refresh()});
+}
+
+/* ---------- render ---------- */
+function render(){
+  if(!S) return;
+  $("#clubName").textContent=S.club.name+": панель";
+  document.title="Панель: "+S.club.name;
+  $$("#side [data-tab]").forEach(b=>b.setAttribute("aria-current",b.dataset.tab===A.tab?"page":"false"));
+  const m=$("#adminMain"); m.onclick=null;
+  ({overview:aOverview,hall:aHall,bookings:aBookings,shifts:aShifts,zones:aZones})[A.tab](m);
+}
+
+/* ---- overview ---- */
+function periodRange(p){const t=dayStart(Date.now());
+  if(p==="day") return [t,t+DAY,t-DAY,t];
+  if(p==="week") return [t-6*DAY,t+DAY,t-13*DAY,t-6*DAY];
+  return [t-29*DAY,t+DAY,t-59*DAY,t-29*DAY];}
+function stats(from,to){
+  const list=S.bookings.filter(b=>b.start>=from&&b.start<to);
+  const rev=list.filter(countsRevenue);const revenue=rev.reduce((a,b)=>a+b.total,0);
+  const seatHours=rev.reduce((a,b)=>a+b.hours*b.seats.length,0);
+  const totalSeats=S.zones.reduce((a,z)=>a+z.seats,0);const days=Math.max(1,Math.round((Math.min(to,dayStart(Date.now())+DAY)-from)/DAY));
+  return {rev,revenue,count:rev.length,seatHours,avg:rev.length?revenue/rev.length:0,load:totalSeats?seatHours/(totalSeats*24*days)*100:0,
+    cancelled:list.filter(b=>{const s=statusOf(b);return s==="cancelled"||s==="noshow"}).length};
+}
+function delta(a,b){if(!b)return"";const d=(a-b)/b*100;return `<small class="${d>=0?"up":"down"}">${d>=0?"+":""}${d.toFixed(0)}% к прошлому периоду</small>`}
+function aOverview(m){
+  const [f,t,pf,pt]=periodRange(A.period);const st=stats(f,t),pv=stats(pf,pt);
+  const lbl={day:"сегодня",week:"за 7 дней",month:"за 30 дней"}[A.period];
+  let buckets=[];
+  if(A.period==="day"){for(let h=0;h<24;h++){const s=f+h*HOUR;buckets.push({l:pad(h),v:0,s,e:s+HOUR})}}
+  else{const n=A.period==="week"?7:30;for(let i=0;i<n;i++){const s=f+i*DAY;const d=new Date(s);buckets.push({l:A.period==="week"?WD[d.getDay()]+" "+d.getDate():String(d.getDate()),v:0,s,e:s+DAY,we:d.getDay()===0||d.getDay()===6})}}
+  st.rev.forEach(b=>{const k=buckets.find(x=>b.start>=x.s&&b.start<x.e);if(k)k.v+=b.total});
+  const max=Math.max(1,...buckets.map(b=>b.v));const W=760,H=240,pl=8,pb=24,bw=(W-pl*2)/buckets.length;
+  const bars=buckets.map((b,i)=>{const h=(b.v/max)*(H-pb-16);const x=pl+i*bw+bw*.15;const y=H-pb-h;const isT=A.period!=="day"&&b.s===dayStart(Date.now());
+    return `<g><title>${b.l}: ${money(b.v)}</title><rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${(bw*.7).toFixed(1)}" height="${Math.max(h,1).toFixed(1)}" rx="3" fill="${isT?"#F4B740":"#3ED3E6"}" opacity="${b.we?1:.8}"/>${(buckets.length<=14||i%3===0)?`<text x="${(x+bw*.35).toFixed(1)}" y="${H-6}" text-anchor="middle">${b.l}</text>`:""}</g>`}).join("");
+  const zIds=[...new Set([...S.zones.map(z=>z.id),...st.rev.map(b=>b.zoneId)])];
+  const byZone=zIds.map(id=>({z:zoneById(id)||{name:"удалённая",color:"#888"},v:st.rev.filter(b=>b.zoneId===id).reduce((a,b)=>a+b.total,0)}));
+  const zmax=Math.max(1,...byZone.map(x=>x.v));
+  const staffRev={};st.rev.forEach(b=>{const [k,p]=shiftKeyFor(b.start);const sid=S.shifts[k]&&S.shifts[k][p];if(sid)staffRev[sid]=(staffRev[sid]||0)+b.total});
+  const smax=Math.max(1,...Object.values(staffRev));
+  const staffShown=S.allStaff.filter(s=>s.active||staffRev[s.id]);
+  const upcoming=S.bookings.filter(b=>statusOf(b)==="booked"&&b.start>Date.now()-15*60e3).sort((a,b)=>a.start-b.start).slice(0,8);
+  const sh=shiftNow();const total=S.zones.reduce((a,z)=>a+z.seats,0);const free=S.zones.reduce((a,z)=>a+freeNow(z).length,0);
+  m.innerHTML=`<div class="page-head"><div><h2>Обзор</h2><div class="muted">Сейчас занято ${total-free} из ${total} мест${sh?`, на смене ${esc(sh.name)}`:""}</div></div>
+    <div class="seg" role="group" aria-label="Период">${["day","week","month"].map(p=>`<button type="button" data-period="${p}" aria-pressed="${A.period===p}">${{day:"День",week:"Неделя",month:"Месяц"}[p]}</button>`).join("")}</div></div>
+  <div class="kpis">
+    <div class="kpi"><span>Выручка ${lbl}</span><b class="num">${money(st.revenue)}</b>${delta(st.revenue,pv.revenue)}</div>
+    <div class="kpi"><span>Броней</span><b class="num">${st.count}</b>${delta(st.count,pv.count)}</div>
+    <div class="kpi"><span>Продано часов (место × час)</span><b class="num">${st.seatHours}</b>${delta(st.seatHours,pv.seatHours)}</div>
+    <div class="kpi"><span>Средний чек</span><b class="num">${money(st.avg)}</b>${delta(st.avg,pv.avg)}</div>
+    <div class="kpi"><span>Загрузка зала</span><b class="num">${st.load.toFixed(0)}%</b><small class="muted">от всех мест круглосуточно</small></div>
+    <div class="kpi"><span>Отмены и неявки</span><b class="num">${st.cancelled}</b><small class="muted">не входят в выручку</small></div>
+  </div>
+  <div class="grid2">
+    <div class="card"><b>Выручка ${A.period==="day"?"по часам начала брони":"по дням"}</b>${st.revenue?`<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="График выручки">${bars}</svg>`:`<div class="empty">За этот период броней пока нет.</div>`}</div>
+    <div class="card"><b>По зонам</b>${byZone.map(x=>`<div class="bar-row"><span>${esc(x.z.name)}</span><div class="track"><div class="fill" style="width:${(x.v/zmax*100).toFixed(1)}%;background:${x.z.color}"></div></div><b>${money(x.v)}</b></div>`).join("")}
+      <div style="margin-top:18px"><b>По администраторам на смене</b>${staffShown.map(s=>`<div class="bar-row"><span>${esc(s.name)}</span><div class="track"><div class="fill" style="width:${((staffRev[s.id]||0)/smax*100).toFixed(1)}%;background:${s.color}"></div></div><b>${money(staffRev[s.id]||0)}</b></div>`).join("")||`<p class="muted">Назначьте смены, и здесь появится выручка по сотрудникам.</p>`}</div></div>
+  </div>
+  <div class="card mt"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px"><b>Ближайшие брони</b><button class="btn ghost sm" type="button" data-goto="bookings">Все брони</button></div>
+    ${upcoming.length?`<div class="tbl-wrap"><table><thead><tr><th>Когда</th><th>Гость</th><th>Зона и места</th><th>Часы</th><th>Сумма</th><th>Код</th></tr></thead><tbody>${upcoming.map(b=>{const z=zoneById(b.zoneId);return `<tr><td>${dLabel(b.start)}, <b>${hm(b.start)}</b></td><td>${esc(b.name)}<br><span class="muted">${esc(b.phone)}</span></td><td><span class="badge"><i style="background:${z?z.color:"#888"}"></i>${esc(z?z.name:"—")}</span> ${b.seats.map(seatNum).join(", ")}</td><td>${b.hours} ч</td><td class="num">${money(b.total)}</td><td><b>${esc(b.code)}</b></td></tr>`}).join("")}</tbody></table></div>`:`<div class="empty">Предстоящих броней нет.</div>`}</div>`;
+  $$("[data-period]",m).forEach(b=>b.addEventListener("click",()=>{A.period=b.dataset.period;render()}));
+  $$("[data-goto]",m).forEach(b=>b.addEventListener("click",()=>{A.tab=b.dataset.goto;render()}));
+}
+
+/* ---- hall ---- */
+function aHall(m){
+  const now=Date.now();
+  m.innerHTML=`<div class="page-head"><div><h2>Зал сейчас</h2><div class="muted">Нажмите на место, чтобы посадить гостя без брони, отметить приход, завершить сеанс или отправить место на обслуживание.</div></div>
+    <div class="legend"><span><i style="border:1.5px solid var(--std)"></i>свободно</span><span><i style="background:repeating-linear-gradient(135deg,#2a2d57 0 3px,#1d1f40 3px 6px)"></i>занято</span><span><i style="background:#26172a;border:1px solid #5a3346"></i>обслуживание</span></div></div>
+    ${S.zones.map(z=>`<div class="map mt" style="--zc:${z.color}"><div class="map-head"><b>${esc(z.name)}</b><span class="muted">свободно ${freeNow(z).length} из ${z.seats}</span></div>
+      <div class="seats" style="--cols:${z.cols}">${seatIds(z).map(id=>{const s=seatState(id,now,now+60e3);const tag=s.b?esc(s.b.name.split(" ")[0]):"";
+        return `<button type="button" class="seat ${s.st}" data-hseat="${id}" style="--zc:${z.color}" aria-label="Место ${seatNum(id)}"><span class="scr">${seatNum(id)}</span><span class="stand"></span>${tag?`<span class="who">${tag}</span>`:""}</button>`}).join("")}</div></div>`).join("")||`<div class="card empty">Добавьте зоны в разделе «Зоны и цены».</div>`}`;
+  m.onclick=hallClick;
+}
+function hallClick(e){
+  const btn=e.target.closest("[data-hseat]");if(!btn)return;const id=btn.dataset.hseat;const z=zoneById(zoneOfSeat(id));const n=seatNum(id);const now=Date.now();const s=seatState(id,now,now+60e3);
+  let info="";
+  if(s.b) info=`<p>Бронь <b>${esc(s.b.code)}</b>: ${esc(s.b.name)}${s.b.phone?", "+esc(s.b.phone):""}<br>${hm(s.b.start)}–${hm(bEnd(s.b))}, ${money(s.b.total)}</p>`;
+  else if(s.st==="rep") info=`<p>На обслуживании${s.m.note?`: ${esc(s.m.note)}`:""}</p>`;
+  else{const nb=S.bookings.filter(x=>isActive(x)&&x.seats.includes(id)&&x.start>now).sort((a,c)=>a.start-c.start)[0];info=`<p class="muted">Свободно. Ближайшая бронь: ${nb?`${dLabel(nb.start)} в ${hm(nb.start)}, ${esc(nb.name)}`:"нет"}</p>`}
+  openModal(`<div class="seat-pop"><h4>${esc(z.name)}, место ${n}</h4>${info}
+    <div class="pop-actions">
+      ${s.st==="free"?`<div class="row"><select id="mHours" aria-label="На сколько часов">${[1,2,3,4,5,6,8,12].map(h=>`<option value="${h}">${h} ч</option>`).join("")}</select><button class="btn" type="button" data-act="walkin">Посадить гостя без брони</button></div>
+        <input type="text" id="mNote" placeholder="Имя гостя (необязательно)" maxlength="40">`:""}
+      ${s.b&&s.b.status==="booked"?`<button class="btn" type="button" data-act="arrived">Гость пришёл</button>`:""}
+      ${s.b?`<button class="btn ghost" type="button" data-act="finish">Завершить сейчас</button>`:""}
+      ${s.st==="rep"?`<button class="btn" type="button" data-act="unrepair">Вернуть в работу</button>`:s.st==="free"?`<input type="text" id="mRep" placeholder="Причина обслуживания, например «меняем мышь»" maxlength="60"><button class="btn danger" type="button" data-act="repair">На обслуживание</button>`:""}
+      <button class="btn ghost" type="button" data-close>Закрыть</button></div></div>`,
+  mm=>mm.addEventListener("click",async ev=>{const a=ev.target.closest("[data-act]");if(!a||a.disabled)return;a.disabled=true;const act0=a.dataset.act;let ok=false;
+    if(act0==="walkin"){const h=+$("#mHours").value;const start=Date.now();const name=$("#mNote").value.trim()||"Гость без брони";
+      ok=await act(sb.from("club_bookings").insert(toRow({code:mkCode(),name,phone:"",zoneId:z.id,seats:[id],start,hours:h,total:calcPrice(z,start,h,1,priceClub()).total,status:"arrived",source:"walkin",comment:"Посажен с карты зала"})),"Гость посажен");}
+    if(act0==="arrived") ok=await act(sb.from("club_bookings").update({status:"arrived"}).eq("id",s.b.id),"Отмечено: гость пришёл");
+    if(act0==="finish"){const b=s.b;const used=Math.min(b.hours,Math.max(1,Math.ceil((Date.now()-b.start)/HOUR)));
+      if(b.seats.length>1){const rest=b.seats.filter(x=>x!==id);
+        const r1=await sb.from("club_bookings").update({seats:rest.map(seatNum),total:calcPrice(z,b.start,b.hours,rest.length,priceClub()).total}).eq("id",b.id);
+        if(r1.error){toast(errText(r1.error))}else ok=await act(sb.from("club_bookings").insert(toRow({...b,code:mkCode(),seats:[id],hours:used,total:calcPrice(z,b.start,used,1,priceClub()).total,status:"done"})),"Сеанс на месте завершён");}
+      else ok=await act(sb.from("club_bookings").update({hours:used,total:calcPrice(z,b.start,used,1,priceClub()).total,status:"done"}).eq("id",b.id),`Сеанс завершён, ${used} ч`);}
+    if(act0==="repair") ok=await act(sb.from("club_repairs").insert({zone_id:z.id,seat:n,note:$("#mRep").value.trim()}),"Место отправлено на обслуживание");
+    if(act0==="unrepair") ok=await act(sb.from("club_repairs").delete().eq("zone_id",z.id).eq("seat",n),"Место снова в работе");
+    if(ok) closeModal(); else a.disabled=false;}));
+}
+
+/* ---- bookings ---- */
+function aBookings(m){
+  const today=dayStart(Date.now());let list=S.bookings.slice();
+  if(A.bDate==="today")list=list.filter(b=>b.start>=today&&b.start<today+DAY);
+  else if(A.bDate==="tomorrow")list=list.filter(b=>b.start>=today+DAY&&b.start<today+2*DAY);
+  else if(A.bDate==="upcoming")list=list.filter(b=>isActive(b)||(b.start>=Date.now()&&statusOf(b)!=="cancelled"));
+  else if(A.bDate==="week")list=list.filter(b=>b.start>=today-6*DAY&&b.start<today+DAY);
+  else if(/^\d{4}-/.test(A.bDate))list=list.filter(b=>dayKey(b.start)===A.bDate);
+  if(A.bZone!=="all")list=list.filter(b=>b.zoneId===A.bZone);
+  if(A.bStatus!=="all")list=list.filter(b=>statusOf(b)===A.bStatus);
+  if(A.q){const q=A.q.toLowerCase();list=list.filter(b=>(b.name+" "+b.phone+" "+b.code).toLowerCase().includes(q))}
+  const asc=["today","tomorrow","upcoming"].includes(A.bDate);list.sort((a,b)=>asc?a.start-b.start:b.start-a.start);
+  const sum=list.filter(countsRevenue).reduce((a,b)=>a+b.total,0);
+  const src={site:"сайт",admin:"админ",walkin:"без брони"};
+  m.innerHTML=`<div class="page-head"><div><h2>Брони</h2><div class="muted">${list.length} ${plural(list.length,"бронь","брони","броней")}, в выручку идёт ${money(sum)}</div></div><button class="btn" type="button" id="newB">Новая бронь</button></div>
+  <div class="filters">
+    <div class="seg" role="group" aria-label="Период">${[["today","Сегодня"],["tomorrow","Завтра"],["upcoming","Предстоящие"],["week","7 дней"],["all","Последние 2 месяца"]].map(([k,n])=>`<button type="button" data-bd="${k}" aria-pressed="${A.bDate===k}">${n}</button>`).join("")}</div>
+    <input type="date" id="bDay" value="${/^\d{4}-/.test(A.bDate)?A.bDate:""}" aria-label="Конкретный день">
+    <select id="bZone" aria-label="Зона"><option value="all">Все зоны</option>${S.allZones.map(z=>`<option value="${z.id}" ${A.bZone===z.id?"selected":""}>${esc(z.name)}${z.active?"":" (удалена)"}</option>`).join("")}</select>
+    <select id="bStatus" aria-label="Статус"><option value="all">Все статусы</option>${Object.entries(STATUS).map(([k,v])=>`<option value="${k}" ${A.bStatus===k?"selected":""}>${v.n}</option>`).join("")}</select>
+    <input type="text" id="bQ" placeholder="Поиск: имя, телефон или код" value="${esc(A.q)}">
+  </div>
+  ${list.length?`<div class="tbl-wrap"><table><thead><tr><th>Когда</th><th>Гость</th><th>Зона и места</th><th>Часы</th><th>Сумма</th><th>Код</th><th>Оформлена</th><th>Статус</th></tr></thead><tbody>
+  ${list.slice(0,300).map(b=>{const z=zoneById(b.zoneId);const st=statusOf(b);return `<tr><td>${dLabel(b.start)}<br><b>${hm(b.start)}–${hm(bEnd(b))}</b></td>
+    <td><b>${esc(b.name)}</b><br><span class="muted">${b.phone?`<a href="tel:${esc(b.phone.replace(/[^\d+]/g,""))}" style="color:var(--muted)">${esc(b.phone)}</a>`:"—"}</span></td>
+    <td><span class="badge"><i style="background:${z?z.color:"#888"}"></i>${esc(z?z.name:"удалена")}</span><br><span class="muted">${b.seats.length} шт.: ${b.seats.map(seatNum).join(", ")}</span></td>
+    <td>${b.hours} ч</td><td class="num"><b>${money(b.total)}</b></td><td><b>${esc(b.code)}</b></td>
+    <td class="muted">${dLabel(b.createdAt)}, ${hm(b.createdAt)}<br>${src[b.source]||esc(b.source)}</td>
+    <td><select data-st="${b.id}" aria-label="Статус брони ${esc(b.code)}" style="border-color:${STATUS[st].c}">${Object.entries(STATUS).map(([k,v])=>`<option value="${k}" ${st===k?"selected":""}>${v.n}</option>`).join("")}</select></td></tr>`}).join("")}
+  </tbody></table></div>${list.length>300?`<p class="muted">Показаны первые 300. Уточните фильтр.</p>`:""}`:`<div class="card empty">Броней с такими условиями нет.</div>`}`;
+  $$("[data-bd]",m).forEach(b=>b.addEventListener("click",()=>{A.bDate=b.dataset.bd;render()}));
+  $("#bDay").addEventListener("change",e=>{A.bDate=e.target.value||"today";render()});
+  $("#bZone").addEventListener("change",e=>{A.bZone=e.target.value;render()});
+  $("#bStatus").addEventListener("change",e=>{A.bStatus=e.target.value;render()});
+  let qt;$("#bQ").addEventListener("input",e=>{clearTimeout(qt);qt=setTimeout(()=>{A.q=e.target.value;render();const i=$("#bQ");i.focus();i.setSelectionRange(i.value.length,i.value.length)},250)});
+  $$("[data-st]",m).forEach(s=>s.addEventListener("change",async()=>{s.disabled=true;const v=s.value;const ok=await act(sb.from("club_bookings").update({status:v}).eq("id",s.dataset.st),`Статус: ${STATUS[v].n}`);if(!ok)render()}));
+  $("#newB").addEventListener("click",newBookingModal);
+}
+function newBookingModal(){
+  const n=new Date();const mins=Math.ceil((n.getHours()*60+n.getMinutes())/30)*30;
+  openModal(`<h3 style="font-family:var(--display);margin:0 0 14px">Новая бронь</h3>
+    <label class="field-label">Имя гостя</label><input type="text" id="nbName" maxlength="40">
+    <label class="field-label mt">Телефон</label><input type="tel" id="nbPhone" value="+7 " maxlength="20">
+    <div class="row mt"><div><label class="field-label">Зона</label><select id="nbZone">${S.zones.map(z=>`<option value="${z.id}">${esc(z.name)}</option>`).join("")}</select></div>
+    <div><label class="field-label">Мест</label><input type="number" id="nbCount" value="1" min="1" max="200"></div></div>
+    <div class="row mt"><div><label class="field-label">Дата</label><input type="date" id="nbDate" value="${dayKey(Date.now()+(mins>=1440?DAY:0))}"></div>
+    <div><label class="field-label">Начало</label><input type="text" id="nbTime" value="${pad(Math.floor(mins/60)%24)}:${pad(mins%60)}" placeholder="18:30"></div>
+    <div><label class="field-label">Часов</label><input type="number" id="nbHours" value="2" min="1" max="24"></div></div>
+    <label class="field-label mt">Комментарий</label><input type="text" id="nbComment" maxlength="200" placeholder="Например, день рождения">
+    <div class="err" id="nbErr"></div><p class="muted" style="font-size:13px" id="nbInfo"></p>
+    <div class="row mt"><button class="btn ghost" data-close type="button">Отмена</button><button class="btn" id="nbSave" type="button">Сохранить бронь</button></div>`,
+  mm=>{
+    const calc=()=>{const z=zoneById($("#nbZone").value);if(!z)return null;const dk=$("#nbDate").value;const tm=$("#nbTime").value.trim().match(/^(\d{1,2}):(\d{2})$/);
+      if(!dk||!tm||+tm[1]>23||+tm[2]>59)return null;const start=keyToTs(dk)+(+tm[1])*HOUR+(+tm[2])*60e3;const hours=Math.max(1,Math.min(24,+$("#nbHours").value||1));const cnt=Math.max(1,+$("#nbCount").value||1);
+      const free=seatIds(z).filter(id=>seatState(id,start,start+hours*HOUR).st==="free");return {z,start,hours,cnt,free,price:calcPrice(z,start,hours,cnt,priceClub()).total}};
+    const upd=()=>{const c=calc();$("#nbInfo").textContent=c?`Свободно ${c.free.length} из ${c.z.seats} на это время, сумма ${money(c.price)}`:"Проверьте дату и время."};
+    mm.addEventListener("input",upd);upd();
+    $("#nbSave").addEventListener("click",async()=>{const c=calc();const name=$("#nbName").value.trim();const err=$("#nbErr");err.textContent="";
+      if(!c){err.textContent="Время в формате 18:30.";return} if(name.length<2){err.textContent="Укажите имя гостя.";return}
+      if(c.free.length<c.cnt){err.textContent=`На это время свободно только ${c.free.length} ${plural(c.free.length,"место","места","мест")}.`;return}
+      $("#nbSave").disabled=true;
+      const ok=await act(sb.from("club_bookings").insert(toRow({code:mkCode(),name,phone:normPhone($("#nbPhone").value)||"",zoneId:c.z.id,seats:c.free.slice(0,c.cnt),start:c.start,hours:c.hours,total:c.price,status:"booked",source:"admin",comment:$("#nbComment").value.trim()})),"Бронь сохранена");
+      if(ok)closeModal();else $("#nbSave").disabled=false});
+  });
+}
+
+/* ---- shifts ---- */
+function aShifts(m){
+  const today=dayStart(Date.now());
+  if(A.weekStart===null){const wd=(new Date(today).getDay()+6)%7;A.weekStart=today-wd*DAY}
+  const days=Array.from({length:7},(_,i)=>dayStart(A.weekStart+i*DAY+3*HOUR));
+  const opt=sel=>`<option value="">не назначен</option>`+S.allStaff.filter(s=>s.active||s.id===sel).map(s=>`<option value="${s.id}" ${sel===s.id?"selected":""}>${esc(s.name)}</option>`).join("");
+  const cell=(t,part)=>{const k=dayKey(t);const sid=S.shifts[k]&&S.shifts[k][part];const s=S.allStaff.find(x=>x.id===sid);
+    return `<div class="slot ${t===today?"today":""}">${s?`<div class="who"><span class="dot" style="background:${s.color};box-shadow:0 0 6px ${s.color}"></span>${esc(s.name)}</div>`:`<div class="who muted">Никого</div>`}<select data-shift="${k}|${part}" aria-label="${part==="day"?"Дневная":"Ночная"} смена ${k}">${opt(sid)}</select></div>`};
+  const cnt={};days.forEach(t=>{const v=S.shifts[dayKey(t)];if(v)["day","night"].forEach(p=>{if(v[p])cnt[v[p]]=(cnt[v[p]]||0)+1})});
+  const sh=shiftNow();
+  m.innerHTML=`<div class="page-head"><div><h2>Смены</h2><div class="muted">Сейчас на смене: <b style="color:var(--text)">${sh?esc(sh.name):"никто не назначен"}</b>. Это имя видят гости на сайте.</div></div>
+    <div class="seg"><button type="button" id="wPrev" aria-label="Прошлая неделя">‹</button><button type="button" id="wNow">Эта неделя</button><button type="button" id="wNext" aria-label="Следующая неделя">›</button></div></div>
+  <div class="map" style="padding:14px"><div class="week">
+    <div></div>${days.map(t=>{const d=new Date(t);return `<div class="hd ${t===today?"today":""}">${WD[d.getDay()]}<b>${d.getDate()} ${MON[d.getMonth()]}</b></div>`}).join("")}
+    <div class="lbl">День<span class="muted" style="font-weight:500">08:00–20:00</span></div>${days.map(t=>cell(t,"day")).join("")}
+    <div class="lbl">Ночь<span class="muted" style="font-weight:500">20:00–08:00</span></div>${days.map(t=>cell(t,"night")).join("")}
+  </div></div>
+  <div class="row mt"><button class="btn ghost sm" type="button" id="copyWeek" style="flex:none">Скопировать эту неделю на следующую</button></div>
+  <div class="grid2 mt">
+    <div><h3 style="font-family:var(--display);font-size:18px;margin:10px 0 12px">Сотрудники</h3><div class="staff-list">${S.staff.map(s=>`<div class="staff"><div class="ava" style="background:${s.color}">${esc(s.name[0]||"?")}</div><div class="grow"><b>${esc(s.name)}</b><small>${esc(s.phone||"без телефона")}, ${cnt[s.id]||0} ${plural(cnt[s.id]||0,"смена","смены","смен")} на этой неделе</small></div><button class="btn danger sm" type="button" data-del-staff="${s.id}">Удалить</button></div>`).join("")||`<div class="empty">Добавьте первого сотрудника.</div>`}</div></div>
+    <div class="card" style="align-self:start"><b>Добавить сотрудника</b>
+      <label class="field-label mt" for="stName">Имя</label><input type="text" id="stName" placeholder="Например, Дана" maxlength="30">
+      <label class="field-label mt" for="stPhone">Телефон</label><input type="tel" id="stPhone" placeholder="+7 7__ ___ __ __" maxlength="20">
+      <div class="err" id="stErr"></div><button class="btn block mt" type="button" id="stAdd">Добавить</button></div>
+  </div>`;
+  $$("[data-shift]",m).forEach(s=>s.addEventListener("change",()=>{const [k,p]=s.dataset.shift.split("|");s.disabled=true;
+    act(sb.from("club_shifts").upsert({day:k,part:p,staff_id:s.value||null}),"Смена сохранена")}));
+  $("#wPrev").onclick=()=>{A.weekStart-=7*DAY;render()};$("#wNext").onclick=()=>{A.weekStart+=7*DAY;render()};$("#wNow").onclick=()=>{A.weekStart=null;render()};
+  $("#copyWeek").onclick=async()=>{const rows=[];days.forEach(t=>{const src=S.shifts[dayKey(t)];if(src)["day","night"].forEach(p=>{if(src[p]!==undefined)rows.push({day:dayKey(dayStart(t+7*DAY+3*HOUR)),part:p,staff_id:src[p]||null})})});
+    if(!rows.length){toast("На этой неделе нет смен для копирования");return}
+    if(await act(sb.from("club_shifts").upsert(rows),"Скопировано на следующую неделю")){A.weekStart+=7*DAY;render()}};
+  $("#stAdd").onclick=async()=>{const n=$("#stName").value.trim();if(n.length<2){$("#stErr").textContent="Укажите имя.";return}
+    const pal=["#3ED3E6","#FF5C93","#F4B740","#8C7CFF","#5BE39B","#FF9F43","#62A8FF"];
+    $("#stAdd").disabled=true;await act(sb.from("club_staff").insert({name:n,phone:normPhone($("#stPhone").value)||"",color:pal[S.allStaff.length%pal.length]}),`${n}: добавлен(а)`)};
+  $$("[data-del-staff]",m).forEach(b=>b.addEventListener("click",()=>{const s=S.staff.find(x=>x.id===b.dataset.delStaff);
+    confirmModal(`Удалить ${s.name}?`,"Сотрудник пропадёт из списка для новых смен. Прошлые смены и выручка по ним сохранятся.","Удалить",()=>act(sb.from("club_staff").update({active:false}).eq("id",s.id),"Сотрудник удалён"))}));
+}
+
+/* ---- zones & prices ---- */
+function aZones(m){
+  m.innerHTML=`<div class="page-head"><div><h2>Зоны и цены</h2><div class="muted">Изменения сохраняются сразу и видны гостям на сайте.</div></div><button class="btn" type="button" id="zAdd">Добавить зону</button></div>
+  <div class="zedit">${S.zones.map(z=>`<div class="zrow" style="--zc:${z.color}" data-z="${z.id}">
+    <label class="wide">Название<input type="text" data-f="name" value="${esc(z.name)}" maxlength="30"></label>
+    <label>Тип<select data-f="kind">${Object.entries(KIND).map(([k,v])=>`<option value="${k}" ${z.kind===k?"selected":""}>${v.n}</option>`).join("")}</select></label>
+    <label>Мест (ПК)<input type="number" data-f="seats" min="1" max="200" value="${z.seats}"></label>
+    <label>В ряду на карте<input type="number" data-f="cols" min="1" max="12" value="${z.cols}"></label>
+    <label>Цена днём, ₸/час<input type="number" data-f="price" min="0" step="50" value="${z.price}"></label>
+    <label>Цена ночью, ₸/час<input type="number" data-f="night" min="0" step="50" value="${z.night}"></label>
+    <label>Порядок на сайте<input type="number" data-f="sort" min="0" max="999" value="${z.sort}"></label>
+    <label>Цвет<input type="color" data-f="color" value="${z.color}"></label>
+    <label class="wide" style="grid-column:1/-1">Характеристики (через запятую, гости видят под картой)<input type="text" data-f="specs" value="${esc(z.specs)}" maxlength="200"></label>
+    <div style="grid-column:1/-1;display:flex;justify-content:flex-end"><button class="btn danger sm" type="button" data-zdel="${z.id}">Удалить зону</button></div></div>`).join("")||`<div class="card empty">Зон пока нет. Добавьте первую.</div>`}</div>
+  <div class="grid2 mt">
+    <div class="card"><b>Клуб</b>
+      <div class="row mt"><div><label class="field-label">Название</label><input type="text" id="cfName" value="${esc(S.club.name)}" maxlength="40"></div><div><label class="field-label">Телефон</label><input type="tel" id="cfPhone" value="${esc(S.club.phone)}" maxlength="20"></div></div>
+      <div class="row mt"><div><label class="field-label">Адрес</label><input type="text" id="cfAddr" value="${esc(S.club.address)}" maxlength="80"></div><div><label class="field-label">Часы работы</label><input type="text" id="cfHours" value="${esc(S.club.hours)}" maxlength="40"></div></div>
+      <div class="row mt"><div><label class="field-label">Ночной тариф с (час)</label><input type="number" id="cfNf" min="0" max="23" value="${S.club.nightFrom}"></div><div><label class="field-label">до (час)</label><input type="number" id="cfNt" min="0" max="23" value="${S.club.nightTo}"></div><div><label class="field-label">Бронь вперёд, дней</label><input type="number" id="cfDays" min="1" max="14" value="${S.club.maxDays}"></div></div>
+      <button class="btn mt" type="button" id="cfSave">Сохранить настройки клуба</button></div>
+    <div class="card" style="align-self:start"><b>Ваш аккаунт</b><p class="muted" style="font-size:14px">${esc(me.email)}</p>
+      <label class="field-label" for="np">Новый пароль</label><input type="password" id="np" autocomplete="new-password" placeholder="Минимум 8 символов">
+      <button class="btn ghost sm mt" type="button" id="npSave">Сменить пароль</button>
+      <p class="note mt">Новых администраторов добавляет владелец в Supabase (инструкция в README).</p></div>
+  </div>`;
+  m.querySelectorAll(".zrow").forEach(row=>row.addEventListener("change",async e=>{const f=e.target.dataset.f;if(!f)return;const z=zoneById(row.dataset.z);let v=e.target.value;
+    if(["seats","cols","price","night","sort"].includes(f)){v=Math.round(+v||0);v=Math.max(["price","night","sort"].includes(f)?0:1,v);if(f==="cols")v=Math.min(12,v);if(f==="seats")v=Math.min(200,v)}
+    if(f==="name"&&!String(v).trim()){e.target.value=z.name;return}
+    if(f==="seats"&&v<z.seats){const cut=seatIds(z).slice(v);const fut=S.bookings.filter(b=>b.zoneId===z.id&&isActive(b)&&b.seats.some(s=>cut.includes(s)));
+      if(fut.length){toast(`Нельзя: на места ${cut.map(seatNum).join(", ")} есть активные брони (${fut.length})`);e.target.value=z.seats;return}
+      const rep=cut.filter(s=>S.manual[s]);if(rep.length){const r=await sb.from("club_repairs").delete().eq("zone_id",z.id).gt("seat",v);if(r.error){toast(errText(r.error));return}}}
+    e.target.blur();await act(sb.from("club_zones").update({[f]:v}).eq("id",z.id),"Сохранено")}));
+  $$("[data-zdel]",m).forEach(b=>b.addEventListener("click",()=>{const z=zoneById(b.dataset.zdel);const fut=S.bookings.filter(x=>x.zoneId===z.id&&isActive(x)).length;
+    if(fut){toast(`У зоны ${fut} активных броней. Сначала отмените или завершите их.`);return}
+    confirmModal(`Удалить зону «${z.name}»?`,"Гости перестанут её видеть. Прошлые брони останутся в отчётах.","Удалить",()=>act(sb.from("club_zones").update({active:false}).eq("id",z.id),"Зона удалена"))}));
+  $("#zAdd").onclick=async()=>{const id="z"+Math.random().toString(36).slice(2,8).replace(/[^a-z0-9]/g,"x");const sort=Math.max(0,...S.allZones.map(z=>z.sort))+1;
+    await act(sb.from("club_zones").insert({id,name:"Новая зона",kind:"other",color:KIND.other.c,seats:4,cols:4,price:1000,night:800,specs:"",sort}),"Зона добавлена внизу списка")};
+  $("#cfSave").onclick=()=>act(sb.from("club_settings").update({name:$("#cfName").value.trim()||S.club.name,phone:$("#cfPhone").value.trim(),address:$("#cfAddr").value.trim(),hours:$("#cfHours").value.trim(),
+      night_from:Math.min(23,Math.max(0,+$("#cfNf").value|0)),night_to:Math.min(23,Math.max(0,+$("#cfNt").value|0)),max_days_ahead:Math.min(14,Math.max(1,+$("#cfDays").value|0)),updated_at:new Date().toISOString()}).eq("id",1),"Настройки клуба сохранены");
+  $("#npSave").onclick=async()=>{const p=$("#np").value;if(p.length<8){toast("Пароль минимум 8 символов");return}const {error}=await sb.auth.updateUser({password:p});if(error){toast(errText(error));return}$("#np").value="";toast("Пароль изменён")};
+}
+
+/* ---------- bind ---------- */
+$("#loginBtn").addEventListener("click",login);
+["#email","#pass"].forEach(s=>$(s).addEventListener("keydown",e=>{if(e.key==="Enter")login()}));
+$("#msgLogout").addEventListener("click",logout);
+$("#logout").addEventListener("click",logout);
+$("#toSite").addEventListener("click",()=>window.open("../","_blank"));
+$("#side").addEventListener("click",e=>{const b=e.target.closest("[data-tab]");if(!b)return;A.tab=b.dataset.tab;render();window.scrollTo(0,0)});
+boot();
+})();
+</script>
+</body>
+</html>
+
     <a class="logo" href="./"><i></i><span id="clubName">&nbsp;</span></a>
     <div class="grow"></div>
-    <div class="shift-pill hidden" id="shiftPill"><span class="dot live"></span><span>На смене: <b id="shiftName">—</b></span></div>
+    <div class="shift-pill hidden" id="shiftPill"><span class="dot live"></span><span>На смене: <b id="shiftName">—</b></# Сайт компьютерного клуба: бронь для гостей и панель администратора
+
+- `index.html` — сайт для гостей (свободные места, бронь, отмена своей брони). Входа в админку на нём нет.
+- `admin/` — панель администратора (выручка, зал, брони, смены, зоны и цены). Вход по email и паролю.
+- `supabase/schema.sql` — база данных. `config.js` — адрес и ключ Supabase.
+
+## 1. База в Supabase (один раз)
+1. Создайте проект в новом аккаунте Supabase (регион Frankfurt, пароль базы сохраните).
+2. **SQL Editor → New query** → вставьте весь `supabase/schema.sql` → **Run**.
+3. **Authentication → Sign In / Providers**: выключите «Allow new users to sign up», чтобы чужие не регистрировались.
+4. **Authentication → Users → Add user → Create new user**: email и пароль администратора, галочка «Auto Confirm User».
+5. Сделайте его администратором клуба (SQL Editor, подставьте свой email):
+   ```sql
+   insert into club_admins (user_id, email)
+   select id, email from auth.users where email = 'admin@example.com';
+   ```
+   Так же добавляются следующие администраторы.
+6. **Project Settings → API Keys**: скопируйте Project URL и Publishable key в `config.js`.
+   Секретный ключ (secret / service_role) никуда не вставляйте.
+
+## 2. Сайт на GitHub Pages
+1. GitHub → **New repository** (Public) → **Add file → Upload files** → перетащите все файлы и папки из этого архива → Commit.
+2. **Settings → Pages** → Source: *Deploy from a branch*, Branch: `main`, папка `/ (root)` → Save.
+3. Через минуту-две адреса будут такие:
+   - гостям: `https://ВАШ-ЛОГИН.github.io/ИМЯ-РЕПОЗИТОРИЯ/`
+   - админам: `https://ВАШ-ЛОГИН.github.io/ИМЯ-РЕПОЗИТОРИЯ/admin/`
+
+## Как это защищено
+- Гость видит только зоны, цены и какие места заняты. Имена, телефоны, выручка и смены ему недоступны: это закрыто правилами базы, а не только интерфейсом.
+- Бронь проверяется на сервере: цена считается там же, двойная бронь одного места на одно время невозможна, на один телефон не больше 3 активных броней.
+- Гость отменяет только свою бронь (секретный токен хранится на его телефоне).
+- Админка без входа ничего не показывает, даже если кто-то узнает её адрес.
+
+## Важно про бесплатный Supabase
+Проект на бесплатном тарифе засыпает после 7 дней без запросов. Пока клуб работает и гости заходят на сайт, этого не случится.
+Резервных копий на бесплатном тарифе нет.
+span></div>
   </div>
 </header>
 
