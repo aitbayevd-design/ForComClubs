@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#13142B">
+<meta name="description" content="Свободные компьютеры и онлайн-бронь в компьютерном клубе">
+<title>Компьютерный клуб</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700;800&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="logo" href="./"><i></i><span id="clubName">&nbsp;</span></a>
+    <div class="grow"></div>
+    <div class="shift-pill hidden" id="shiftPill"><span class="dot live"></span><span>На смене: <b id="shiftName">—</b></span></div>
+  </div>
+</header>
+
+<main id="client">
+  <div class="wrap">
+    <div class="banner hidden" id="banner"></div>
+    <section class="hero">
+      <h1 id="heroTitle">&nbsp;</h1>
+      <p class="lead">Каждый огонёк ниже — компьютер. Горит, значит свободен прямо сейчас. Выберите зону и забронируйте места за минуту.</p>
+      <div class="strips" id="strips"><div class="strip skeleton"><div class="zname">Загружаем зал…</div></div></div>
+    </section>
+
+    <section class="block hidden" id="bookSec">
+      <h2 class="h">Бронирование</h2>
+      <p class="sub">Выберите зону, время и места на карте зала. Оплата на месте.</p>
+      <div class="book">
+        <div class="card">
+          <span class="field-label">Зона</span>
+          <div class="chips" id="zoneChips"></div>
+          <div class="mt">
+            <span class="field-label">День</span>
+            <div class="chips" id="dateChips"></div>
+          </div>
+          <div class="row mt">
+            <div>
+              <label class="field-label" for="timeSel">Начало</label>
+              <select id="timeSel"></select>
+            </div>
+            <div>
+              <span class="field-label">Сколько часов</span>
+              <div class="stepper"><button type="button" data-step="hours" data-d="-1" aria-label="Меньше часов">−</button><output id="hoursOut">2 ч</output><button type="button" data-step="hours" data-d="1" aria-label="Больше часов">+</button></div>
+            </div>
+            <div>
+              <span class="field-label">Сколько ПК</span>
+              <div class="stepper"><button type="button" data-step="count" data-d="-1" aria-label="Меньше мест">−</button><output id="countOut">1</output><button type="button" data-step="count" data-d="1" aria-label="Больше мест">+</button></div>
+            </div>
+          </div>
+          <div class="map mt">
+            <div class="map-head">
+              <b id="mapTitle">Карта зала</b>
+              <div class="legend">
+                <span><i style="border:1.5px solid var(--accent)"></i>свободно</span>
+                <span><i style="background:var(--accent)"></i>ваш выбор</span>
+                <span><i style="background:repeating-linear-gradient(135deg,#2a2d57 0 3px,#1d1f40 3px 6px)"></i>занято</span>
+              </div>
+            </div>
+            <div class="seats" id="clientSeats"></div>
+            <div class="zone-specs" id="zoneSpecs"></div>
+          </div>
+        </div>
+
+        <aside class="card summary">
+          <h3 style="font-family:var(--display);margin:0 0 10px;font-size:18px">Ваша бронь</h3>
+          <div class="sum-line"><span>Зона</span><b id="sZone">—</b></div>
+          <div class="sum-line"><span>Когда</span><b id="sWhen">—</b></div>
+          <div class="sum-line"><span>Места</span><b id="sSeats">—</b></div>
+          <div class="sel-list" id="sSelList"></div>
+          <div class="sum-line"><span>Тариф</span><b id="sRate">—</b></div>
+          <div class="total"><span class="muted">Итого</span><b class="num" id="sTotal">0 ₸</b></div>
+          <label class="field-label" for="cName">Имя</label>
+          <input type="text" id="cName" autocomplete="name" placeholder="Например, Владислав" maxlength="40">
+          <label class="field-label mt" for="cPhone">Телефон</label>
+          <input type="tel" id="cPhone" autocomplete="tel" placeholder="+7 7__ ___ __ __" maxlength="20">
+          <div class="err" id="bookErr" role="alert"></div>
+          <button class="btn block mt" id="bookBtn" type="button">Забронировать</button>
+          <p class="muted" style="font-size:13px;margin:10px 0 0">Бронь держится 15 минут после начала. Отменить можно ниже на этой странице.</p>
+        </aside>
+      </div>
+    </section>
+
+    <section class="block hidden" id="mineSec">
+      <h2 class="h">Ваши брони</h2>
+      <p class="sub">Брони, сделанные с этого телефона.</p>
+      <div class="mine" id="mine"></div>
+    </section>
+
+    <section class="block hidden" id="zonesSec">
+      <h2 class="h">Зоны и цены</h2>
+      <p class="sub" id="nightNote">Цена за час за одно место.</p>
+      <div class="zones-grid" id="zonesInfo"></div>
+    </section>
+  </div>
+  <footer>
+    <div class="wrap">
+      <div><b id="fName" style="color:var(--text)"></b><br><span id="fAddr"></span><br><span id="fHours"></span></div>
+      <div style="text-align:right"><a id="fPhone" href="#"></a></div>
+    </div>
+  </footer>
+</main>
+<div id="modalRoot"></div>
+
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="assets/common.js"></script>
+<script>
+(function(){
+"use strict";
+const {HOUR,DAY,KIND,STATUS,WD,MON,$,$$,esc,money,pad,dayStart,hm,dLabel,plural,normPhone,isNight,hourIn,calcPrice,store,openModal,confirmModal,modalOpen,toast,sb,configured,errText}=Club;
+const MY_KEY="club-my-bookings";
+
+let P=null; // public state
+const C={zoneId:null,date:dayStart(Date.now()),time:null,hours:2,count:1,selected:[],picked:false};
+let busy=false;
+
+function club(){return {tz:P.settings.tz,nightFrom:P.settings.night_from,nightTo:P.settings.night_to}}
+const zoneById=id=>P.zones.find(z=>z.id===id);
+const seatList=z=>Array.from({length:z.seats},(_,i)=>i+1);
+function seatState(zid,n,s,e){
+  if(P.repairs.some(r=>r[0]===zid&&r[1]===n)) return "rep";
+  if(P.busyMap[zid+"-"+n]&&P.busyMap[zid+"-"+n].some(([a,b])=>a<e&&s<b)) return "busy";
+  return "free";
+}
+function freeNow(z){const n=Date.now();return seatList(z).filter(x=>seatState(z.id,x,n,n+60e3)==="free")}
+
+async function load(){
+  if(!configured){showBanner("Сайт ещё не подключён к базе: заполните config.js (адрес и ключ Supabase).");return}
+  const {data,error}=await sb.rpc("club_public_state");
+  if(error){showBanner(errText(error));return}
+  hideBanner();
+  data.busyMap={}; data.busy.forEach(([z,n,a,b])=>{(data.busyMap[z+"-"+n]=data.busyMap[z+"-"+n]||[]).push([Date.parse(a),Date.parse(b)])});
+  P=data; render();
+}
+function showBanner(t){const b=$("#banner");b.textContent=t;b.classList.remove("hidden")}
+function hideBanner(){$("#banner").classList.add("hidden")}
+
+function render(){
+  if(!P) return;
+  const st=P.settings;
+  ["#clubName","#heroTitle","#fName"].forEach(s=>$(s).textContent=st.name);
+  document.title=st.name+" — компьютерный клуб";
+  $("#fAddr").textContent=st.address; $("#fHours").textContent=st.hours;
+  const p=$("#fPhone"); p.textContent=st.phone; p.href="tel:"+String(st.phone).replace(/[^\d+]/g,"");
+  $("#shiftPill").classList.toggle("hidden",!P.shift); $("#shiftName").textContent=P.shift||"";
+  renderStrips(); renderBooking(false); renderZonesInfo(); renderMine();
+}
+function renderStrips(){
+  const box=$("#strips"); box.innerHTML="";
+  if(!P.zones.length){box.innerHTML=`<div class="card empty">Зоны пока не добавлены.</div>`;return}
+  P.zones.forEach(z=>{
+    const free=new Set(freeNow(z));
+    const btn=document.createElement("button"); btn.type="button"; btn.className="strip"; btn.style.setProperty("--zc",z.color);
+    btn.innerHTML=`<div class="zname"><span style="width:10px;height:10px;border-radius:3px;background:${z.color};box-shadow:0 0 8px ${z.color}"></span><div>${esc(z.name)}<small>${money(z.price)} в час</small></div></div>
+      <div class="leds" aria-hidden="true">${seatList(z).map(n=>`<span class="led ${free.has(n)?"on":(seatState(z.id,n,0,1)==="rep"?"rep":"")}"></span>`).join("")}</div>
+      <div class="cnt num">${free.size}<small>из ${z.seats} свободно</small></div>`;
+    btn.setAttribute("aria-label",`${z.name}: свободно ${free.size} из ${z.seats}. Перейти к бронированию`);
+    btn.addEventListener("click",()=>{C.zoneId=z.id;C.date=dayStart(Date.now());C.time=null;renderBooking(true);$("#bookSec").scrollIntoView({behavior:"smooth"})});
+    box.appendChild(btn);
+  });
+}
+function setAccent(c){document.documentElement.style.setProperty("--accent",c)}
+function win(){const s=C.date+C.time*60e3;return [s,s+C.hours*HOUR]}
+function timeOptions(){const o=[];let from=0;if(C.date===dayStart(Date.now())){const n=new Date();from=Math.ceil((n.getHours()*60+n.getMinutes())/30)*30}for(let m=from;m<1440;m+=30)o.push(m);return o}
+function autoPick(n){
+  const z=zoneById(C.zoneId);const [s,e]=win();
+  const free=seatList(z).filter(x=>seatState(z.id,x,s,e)==="free");let best=null;
+  for(let i=0;i+n<=free.length;i++){if(free[i+n-1]-free[i]===n-1){const same=Math.floor((free[i]-1)/z.cols)===Math.floor((free[i+n-1]-1)/z.cols);if(same){best=free.slice(i,i+n);break}if(!best)best=free.slice(i,i+n)}}
+  C.selected=best||free.slice(0,n);
+}
+function renderBooking(repick){
+  if(!P.zones.length){$("#bookSec").classList.add("hidden");return}
+  $("#bookSec").classList.remove("hidden");
+  if(!C.zoneId||!zoneById(C.zoneId)){C.zoneId=P.zones[0].id;repick=true}
+  const z=zoneById(C.zoneId); setAccent(z.color);
+  $("#zoneChips").innerHTML=P.zones.map(q=>`<button type="button" class="chip" data-zone="${q.id}" aria-pressed="${q.id===z.id}" style="--accent:${q.color}"><span class="sw" style="background:${q.color}"></span>${esc(q.name)} <small>${freeNow(q).length}/${q.seats}</small></button>`).join("");
+  const today=dayStart(Date.now());const days=Math.min(14,Math.max(1,P.settings.max_days_ahead||7));let dh="";
+  for(let i=0;i<days;i++){const t=today+i*DAY;const d=new Date(t);dh+=`<button type="button" class="chip date-chip" data-date="${t}" aria-pressed="${t===C.date}"><small>${i===0?"сегодня":i===1?"завтра":WD[d.getDay()]}</small><b>${d.getDate()}</b><small>${MON[d.getMonth()]}</small></button>`}
+  $("#dateChips").innerHTML=dh;
+  const opts=timeOptions(); if(!opts.length){C.date+=DAY;C.time=null;return renderBooking(true)}
+  if(C.time===null||!opts.includes(C.time))C.time=opts[0];
+  $("#timeSel").innerHTML=opts.map(m=>`<option value="${m}" ${m===C.time?"selected":""}>${pad(Math.floor(m/60))}:${pad(m%60)}${isNight(Math.floor(m/60),club())?"  (ночь)":""}</option>`).join("");
+  C.hours=Math.max(1,Math.min(12,C.hours)); C.count=Math.max(0,Math.min(z.seats,C.count));
+  $("#hoursOut").textContent=C.hours+" ч";
+  const [s,e]=win();
+  const before=C.selected.length;
+  C.selected=C.selected.filter(n=>n<=z.seats&&seatState(z.id,n,s,e)==="free");
+  if(repick||C.selected.length<before||!C.picked){if(!C.count)C.count=1;autoPick(C.count);C.picked=true}
+  $("#countOut").textContent=C.count;
+  $("#mapTitle").textContent=`${z.name}: свободно ${seatList(z).filter(n=>seatState(z.id,n,s,e)==="free").length} из ${z.seats} на это время`;
+  const g=$("#clientSeats");g.style.setProperty("--cols",z.cols);
+  g.innerHTML=seatList(z).map(n=>{const st=seatState(z.id,n,s,e);const sel=C.selected.includes(n);
+    return `<button type="button" class="seat ${sel?"sel":st}" data-seat="${n}" style="--zc:${z.color}" ${st!=="free"?"disabled":""} aria-pressed="${sel}" aria-label="Место ${n}, ${st==="free"?(sel?"выбрано":"свободно"):st==="rep"?"на обслуживании":"занято"}"><span class="scr">${n}</span><span class="stand"></span></button>`}).join("");
+  $("#zoneSpecs").innerHTML=String(z.specs||"").split(",").map(x=>x.trim()).filter(Boolean).map(x=>`<span class="spec">${esc(x)}</span>`).join("");
+  renderSummary();
+}
+function renderSummary(){
+  const z=zoneById(C.zoneId);const [s,e]=win();const p=calcPrice(z,s,C.hours,C.selected.length,club());
+  $("#sZone").textContent=z.name; $("#sWhen").textContent=`${dLabel(s)}, ${hm(s)}–${hm(e)}`;
+  $("#sSeats").textContent=C.selected.length?`${C.selected.length} ${plural(C.selected.length,"место","места","мест")}`:"не выбраны";
+  $("#sSelList").innerHTML=C.selected.slice().sort((a,b)=>a-b).map(n=>`<span>№${n}</span>`).join("");
+  $("#sRate").textContent=p.nH&&p.dH?`${p.dH} ч × ${money(z.price)}, ${p.nH} ч × ${money(z.night)}`:p.nH?`${money(z.night)} в час, ночной`:`${money(z.price)} в час`;
+  $("#sTotal").textContent=money(p.total);
+  const btn=$("#bookBtn"); btn.disabled=!C.selected.length||busy;
+  btn.textContent=busy?"Оформляем…":C.selected.length?`Забронировать за ${money(p.total)}`:"Выберите места на карте";
+}
+function renderZonesInfo(){
+  $("#zonesSec").classList.toggle("hidden",!P.zones.length);
+  $("#nightNote").textContent=`Цена за час за одно место. Ночной тариф с ${pad(P.settings.night_from)}:00 до ${pad(P.settings.night_to)}:00.`;
+  $("#zonesInfo").innerHTML=P.zones.map(z=>`<div class="zcard" style="--zc:${z.color}"><span class="badge"><i style="background:${z.color}"></i>${KIND[z.kind]?KIND[z.kind].n:""}, ${z.seats} ${plural(z.seats,"место","места","мест")}</span>
+    <h3>${esc(z.name)}</h3><div class="muted" style="font-size:14px">${esc(z.specs)}</div>
+    <div class="price">${money(z.price)}<small> в час</small></div><div class="muted" style="font-size:14px">ночью ${money(z.night)} в час</div></div>`).join("");
+}
+function myList(){try{return JSON.parse(store.get(MY_KEY)||"[]")}catch(e){return[]}}
+async function renderMine(){
+  const list=myList(); if(!list.length||!configured){$("#mineSec").classList.add("hidden");return}
+  const {data,error}=await sb.rpc("club_my_bookings",{p_ids:list.map(x=>x.id),p_tokens:list.map(x=>x.token)});
+  if(error||!data||!data.length){$("#mineSec").classList.add("hidden");return}
+  const rows=data.slice(0,8);
+  $("#mineSec").classList.remove("hidden");
+  $("#mine").innerHTML=rows.map(b=>{const s=Date.parse(b.start_at);const st=STATUS[b.status]?b.status:"booked";
+    return `<div class="item"><div><b>${esc(b.zone)}, ${b.seats.map(n=>"№"+n).join(", ")}</b><br><span class="muted">${dLabel(s)}, ${hm(s)}–${hm(s+b.hours*HOUR)}, код ${esc(b.code)}, ${money(b.total)}</span></div>
+      <div style="display:flex;gap:10px;align-items:center"><span class="badge"><i style="background:${STATUS[st].c}"></i>${STATUS[st].n}</span>${st==="booked"&&s>Date.now()?`<button class="btn danger sm" data-cancel="${b.id}" type="button">Отменить</button>`:""}</div></div>`}).join("");
+}
+async function submit(){
+  const name=$("#cName").value.trim();const phone=normPhone($("#cPhone").value);const err=$("#bookErr");err.textContent="";
+  if(name.length<2){err.textContent="Укажите имя, на которое оформить бронь.";$("#cName").focus();return}
+  if(!phone){err.textContent="Укажите телефон полностью, например +7 701 123 45 67.";$("#cPhone").focus();return}
+  const z=zoneById(C.zoneId);const [s,e]=win();
+  busy=true;renderSummary();
+  const {data,error}=await sb.rpc("club_create_booking",{p_zone:z.id,p_seats:C.selected,p_start:new Date(s).toISOString(),p_hours:C.hours,p_name:name,p_phone:phone});
+  busy=false;
+  if(error){err.textContent=errText(error);await load();return}
+  const list=myList();list.push({id:data.id,token:data.token});store.set(MY_KEY,JSON.stringify(list.slice(-20)));
+  const seats=C.selected.slice().sort((a,b)=>a-b);
+  openModal(`<div style="text-align:center"><span class="badge"><i style="background:var(--ok)"></i>Бронь оформлена</span>
+    <div class="code">${esc(data.code)}</div><p class="muted" style="margin:0 0 16px">Назовите этот код администратору${P.shift?" ("+esc(P.shift)+")":""} при входе.</p></div>
+    <div class="sum-line"><span>Имя</span><b>${esc(name)}</b></div>
+    <div class="sum-line"><span>Зона</span><b>${esc(z.name)}</b></div>
+    <div class="sum-line"><span>Места</span><b>${seats.map(n=>"№"+n).join(", ")}</b></div>
+    <div class="sum-line"><span>Время</span><b>${dLabel(s)}, ${hm(s)}–${hm(e)}</b></div>
+    <div class="total"><span class="muted">К оплате на месте</span><b>${money(data.total)}</b></div>
+    <button class="btn block" data-close type="button">Готово</button>`);
+  C.selected=[];C.picked=false;store.set("club-last-name",name);store.set("club-last-phone",phone);
+  await load();
+}
+function bind(){
+  $("#zoneChips").addEventListener("click",e=>{const b=e.target.closest("[data-zone]");if(!b)return;C.zoneId=b.dataset.zone;C.selected=[];renderBooking(true)});
+  $("#dateChips").addEventListener("click",e=>{const b=e.target.closest("[data-date]");if(!b)return;C.date=+b.dataset.date;C.time=null;renderBooking(true)});
+  $("#timeSel").addEventListener("change",e=>{C.time=+e.target.value;renderBooking(false)});
+  $$("[data-step]").forEach(b=>b.addEventListener("click",()=>{const d=+b.dataset.d;
+    if(b.dataset.step==="hours"){C.hours=Math.max(1,Math.min(12,C.hours+d));renderBooking(false)}
+    else{const z=zoneById(C.zoneId);C.count=Math.max(1,Math.min(z.seats,C.count+d));autoPick(C.count);renderBooking(false)}}));
+  $("#clientSeats").addEventListener("click",e=>{const b=e.target.closest("[data-seat]");if(!b||b.disabled)return;const n=+b.dataset.seat;
+    C.selected=C.selected.includes(n)?C.selected.filter(x=>x!==n):[...C.selected,n];C.count=C.selected.length;renderBooking(false)});
+  $("#bookBtn").addEventListener("click",submit);
+  $("#mine").addEventListener("click",e=>{const b=e.target.closest("[data-cancel]");if(!b)return;
+    confirmModal("Отменить бронь?","Места сразу освободятся для других гостей.","Отменить бронь",async()=>{
+      const it=myList().find(x=>x.id===b.dataset.cancel);if(!it)return;
+      const {data,error}=await sb.rpc("club_cancel_booking",{p_id:it.id,p_token:it.token});
+      if(error||!data){toast(error?errText(error):"Эту бронь уже нельзя отменить.");return}
+      toast("Бронь отменена");load()})});
+  const ph=$("#cPhone");ph.addEventListener("focus",()=>{if(!ph.value)ph.value="+7 "});
+  $("#cName").value=store.get("club-last-name")||""; ph.value=store.get("club-last-phone")||"";
+  document.addEventListener("visibilitychange",()=>{if(!document.hidden)load()});
+  setInterval(()=>{const a=document.activeElement;if(!modalOpen()&&!busy&&!(a&&/INPUT|SELECT/.test(a.tagName)))load()},30e3);
+}
+bind(); load();
+})();
+</script>
+</body>
+</html>
