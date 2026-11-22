@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#13142B">
+<meta name="robots" content="noindex, nofollow">
+<title>Панель клуба</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛠️</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700;800&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap" style="max-width:none">
+    <span class="logo"><i></i><span id="clubName">Панель клуба</span></span>
+    <div class="grow"></div>
+    <span class="live-tag hidden" id="liveTag"><span class="dot live"></span>онлайн</span>
+  </div>
+</header>
+
+<div id="loginView" class="hidden">
+  <div class="login">
+    <div class="card">
+      <h2>Панель клуба</h2>
+      <p class="muted" style="margin:0 0 18px">Вход для администраторов.</p>
+      <label class="field-label" for="email">Email</label>
+      <input type="text" id="email" autocomplete="username" inputmode="email">
+      <label class="field-label mt" for="pass">Пароль</label>
+      <input type="password" id="pass" autocomplete="current-password">
+      <div class="err" id="loginErr" role="alert"></div>
+      <button class="btn block mt" id="loginBtn" type="button">Войти</button>
+    </div>
+  </div>
+</div>
+
+<div id="msgView" class="hidden"><div class="login"><div class="card"><h2 id="msgTitle"></h2><p class="muted" id="msgText"></p><button class="btn ghost block mt hidden" id="msgLogout" type="button">Выйти</button></div></div></div>
+
+<div id="admin" class="admin hidden">
+  <div class="admin-shell">
+    <nav class="side" id="side" aria-label="Разделы">
+      <button data-tab="overview" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Обзор и выручка</button>
+      <button data-tab="hall"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>Зал сейчас</button>
+      <button data-tab="bookings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>Брони</button>
+      <button data-tab="shifts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6M17 11h5M19.5 8.5v5"/></svg>Смены</button>
+      <button data-tab="zones"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="8" cy="8" r="1.5"/></svg>Зоны и цены</button>
+      <div class="sp"></div>
+      <button id="toSite"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>Сайт для клиентов</button>
+      <button id="logout"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>Выйти</button>
+    </nav>
+    <div class="main" id="adminMain"><div class="empty">Загружаем данные…</div></div>
+  </div>
+</div>
+<div id="modalRoot"></div>
+
+<script src="../config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="../assets/common.js"></script>
+<script>
+(function(){
+"use strict";
+const {HOUR,DAY,KIND,STATUS,WD,MON,$,$$,esc,money,pad,dayStart,dayKey,keyToTs,hm,dLabel,plural,normPhone,calcPrice,mkCode,openModal,closeModal,modalOpen,confirmModal,toast,sb,configured,errText}=Club;
+
+let S=null, me=null, loaded=false;
+const A={tab:"overview",period:"week",bDate:"today",bZone:"all",bStatus:"all",q:"",weekStart:null};
+
+/* ---------- views ---------- */
+function show(id){["#loginView","#msgView","#admin"].forEach(s=>$(s).classList.toggle("hidden",s!==id))}
+function message(title,text,canLogout){$("#msgTitle").textContent=title;$("#msgText").textContent=text;$("#msgLogout").classList.toggle("hidden",!canLogout);show("#msgView")}
+
+/* ---------- data ---------- */
+async function loadAll(){
+  const today=dayStart(Date.now());
+  const [st,zs,sf,sh,rp]=await Promise.all([
+    sb.from("club_settings").select("*").eq("id",1).single(),
+    sb.from("club_zones").select("*").order("sort").order("name"),
+    sb.from("club_staff").select("*").order("created_at"),
+    sb.from("club_shifts").select("*").gte("day",dayKey(today-75*DAY)),
+    sb.from("club_repairs").select("*")
+  ]);
+  const err=[st,zs,sf,sh,rp].find(r=>r.error); if(err) throw err.error;
+  const rows=[]; const since=new Date(today-62*DAY).toISOString();
+  for(let from=0;;from+=1000){
+    const {data,error}=await sb.from("club_bookings").select("*").gte("start_at",since).order("start_at").range(from,from+999);
+    if(error) throw error; rows.push(...data); if(data.length<1000) break;
+  }
+  const s=st.data;
+  const shifts={}; sh.data.forEach(r=>{(shifts[r.day]=shifts[r.day]||{})[r.part]=r.staff_id});
+  const manual={}; rp.data.forEach(r=>manual[r.zone_id+"-"+r.seat]={type:"repair",note:r.note});
+  S={club:{name:s.name,address:s.address,phone:s.phone,hours:s.hours,nightFrom:s.night_from,nightTo:s.night_to,tz:s.tz,maxDays:s.max_days_ahead},
+    allZones:zs.data, zones:zs.data.filter(z=>z.active), allStaff:sf.data, staff:sf.data.filter(x=>x.active), shifts, manual,
+    bookings:rows.map(b=>({id:b.id,code:b.code,name:b.name,phone:b.phone,zoneId:b.zone_id,seats:b.seats.map(n=>b.zone_id+"-"+n),
+      start:Date.parse(b.start_at),hours:b.hours,total:b.total,status:b.status,source:b.source,comment:b.comment,createdAt:Date.parse(b.created_at)}))};
+  loaded=true;
+}
+let reloadT=null;
+function scheduleReload(){clearTimeout(reloadT);reloadT=setTimeout(refresh,700)}
+async function refresh(){
+  try{await loadAll()}catch(e){toast(errText(e));return}
+  const a=document.activeElement;
+  if(a&&$("#adminMain").contains(a)&&/INPUT|SELECT|TEXTAREA/.test(a.tagName)) return; // не мешаем вводу
+  render();
+}
+async function act(q,okMsg){const {error}=await q;if(error){toast(errText(error));return false}if(okMsg)toast(okMsg);await refresh();return true}
+
+/* ---------- helpers ---------- */
+const zoneById=id=>S.allZones.find(z=>z.id===id);
+const seatIds=z=>Array.from({length:z.seats},(_,i)=>z.id+"-"+(i+1));
+const seatNum=id=>+id.split("-").pop();
+const zoneOfSeat=id=>id.slice(0,id.lastIndexOf("-"));
+const bEnd=b=>b.start+b.hours*HOUR;
+function statusOf(b){if((b.status==="booked"||b.status==="arrived")&&bEnd(b)<Date.now())return "done";return b.status}
+const isActive=b=>{const s=statusOf(b);return s==="booked"||s==="arrived"};
+const countsRevenue=b=>{const s=statusOf(b);return s==="booked"||s==="arrived"||s==="done"};
+function seatState(seatId,start,end){
+  const m=S.manual[seatId]; if(m) return {st:"rep",m};
+  const b=S.bookings.find(b=>isActive(b)&&b.seats.includes(seatId)&&b.start<end&&start<bEnd(b));
+  if(b) return {st:"busy",b};
+  return {st:"free"};
+}
+function freeNow(z){const n=Date.now();return seatIds(z).filter(id=>seatState(id,n,n+60e3).st==="free")}
+function shiftKeyFor(ts){const h=new Date(ts).getHours();if(h>=8&&h<20)return [dayKey(ts),"day"];if(h>=20)return [dayKey(ts),"night"];return [dayKey(ts-DAY),"night"]}
+function shiftNow(){const [k,p]=shiftKeyFor(Date.now());const sid=S.shifts[k]&&S.shifts[k][p];return S.allStaff.find(s=>s.id===sid)||null}
+const priceClub=()=>({tz:S.club.tz,nightFrom:S.club.nightFrom,nightTo:S.club.nightTo});
+const toRow=b=>({code:b.code,name:b.name,phone:b.phone||"",zone_id:b.zoneId,seats:b.seats.map(seatNum),start_at:new Date(b.start).toISOString(),hours:b.hours,total:b.total,status:b.status,source:b.source,comment:b.comment||""});
+
+/* ---------- auth ---------- */
+async function boot(){
+  if(!configured){message("Админка не подключена","Заполните config.js: адрес проекта Supabase и publishable key.",false);return}
+  const {data:{session}}=await sb.auth.getSession();
+  if(!session){show("#loginView");setTimeout(()=>$("#email").focus(),50);return}
+  me=session.user;
+  const {data:adm,error}=await sb.from("club_admins").select("user_id").eq("user_id",me.id).maybeSingle();
+  if(error){message("Не удалось проверить доступ",errText(error),true);return}
+  if(!adm){message("Нет доступа",`Аккаунт ${me.email} не является администратором клуба. Попросите владельца добавить его.`,true);return}
+  show("#admin");
+  try{await loadAll()}catch(e){message("Не удалось загрузить данные",errText(e),true);return}
+  render(); subscribe();
+}
+async function login(){
+  const email=$("#email").value.trim(),password=$("#pass").value;const err=$("#loginErr");err.textContent="";
+  if(!email||!password){err.textContent="Введите email и пароль.";return}
+  $("#loginBtn").disabled=true;$("#loginBtn").textContent="Входим…";
+  const {error}=await sb.auth.signInWithPassword({email,password});
+  $("#loginBtn").disabled=false;$("#loginBtn").textContent="Войти";
+  if(error){err.textContent=/Invalid login/i.test(error.message)?"Неверный email или пароль.":errText(error);return}
+  $("#pass").value=""; boot();
+}
+async function logout(){await sb.auth.signOut();location.reload()}
+let channel=null;
+function subscribe(){
+  if(channel) return;
+  channel=sb.channel("club-bookings").on("postgres_changes",{event:"*",schema:"public",table:"club_bookings"},p=>{
+    if(p.eventType==="INSERT"&&p.new&&p.new.source==="site"){const z=zoneById(p.new.zone_id);toast(`Новая бронь: ${p.new.name}, ${z?z.name:""}, ${p.new.seats.length} ${plural(p.new.seats.length,"место","места","мест")}`)}
+    scheduleReload();
+  }).subscribe(st=>{$("#liveTag").classList.toggle("hidden",st!=="SUBSCRIBED")});
+  setInterval(()=>{if(!modalOpen())refresh()},60e3);
+  document.addEventListener("visibilitychange",()=>{if(!document.hidden)refresh()});
+}
+
+/* ---------- render ---------- */
+function render(){
+  if(!S) return;
+  $("#clubName").textContent=S.club.name+": панель";
+  document.title="Панель: "+S.club.name;
+  $$("#side [data-tab]").forEach(b=>b.setAttribute("aria-current",b.dataset.tab===A.tab?"page":"false"));
+  const m=$("#adminMain"); m.onclick=null;
+  ({overview:aOverview,hall:aHall,bookings:aBookings,shifts:aShifts,zones:aZones})[A.tab](m);
+}
+
+/* ---- overview ---- */
+function periodRange(p){const t=dayStart(Date.now());
+  if(p==="day") return [t,t+DAY,t-DAY,t];
+  if(p==="week") return [t-6*DAY,t+DAY,t-13*DAY,t-6*DAY];
+  return [t-29*DAY,t+DAY,t-59*DAY,t-29*DAY];}
+function stats(from,to){
+  const list=S.bookings.filter(b=>b.start>=from&&b.start<to);
+  const rev=list.filter(countsRevenue);const revenue=rev.reduce((a,b)=>a+b.total,0);
+  const seatHours=rev.reduce((a,b)=>a+b.hours*b.seats.length,0);
+  const totalSeats=S.zones.reduce((a,z)=>a+z.seats,0);const days=Math.max(1,Math.round((Math.min(to,dayStart(Date.now())+DAY)-from)/DAY));
+  return {rev,revenue,count:rev.length,seatHours,avg:rev.length?revenue/rev.length:0,load:totalSeats?seatHours/(totalSeats*24*days)*100:0,
+    cancelled:list.filter(b=>{const s=statusOf(b);return s==="cancelled"||s==="noshow"}).length};
+}
+function delta(a,b){if(!b)return"";const d=(a-b)/b*100;return `<small class="${d>=0?"up":"down"}">${d>=0?"+":""}${d.toFixed(0)}% к прошлому периоду</small>`}
+function aOverview(m){
+  const [f,t,pf,pt]=periodRange(A.period);const st=stats(f,t),pv=stats(pf,pt);
+  const lbl={day:"сегодня",week:"за 7 дней",month:"за 30 дней"}[A.period];
+  let buckets=[];
+  if(A.period==="day"){for(let h=0;h<24;h++){const s=f+h*HOUR;buckets.push({l:pad(h),v:0,s,e:s+HOUR})}}
+  else{const n=A.period==="week"?7:30;for(let i=0;i<n;i++){const s=f+i*DAY;const d=new Date(s);buckets.push({l:A.period==="week"?WD[d.getDay()]+" "+d.getDate():String(d.getDate()),v:0,s,e:s+DAY,we:d.getDay()===0||d.getDay()===6})}}
+  st.rev.forEach(b=>{const k=buckets.find(x=>b.start>=x.s&&b.start<x.e);if(k)k.v+=b.total});
+  const max=Math.max(1,...buckets.map(b=>b.v));const W=760,H=240,pl=8,pb=24,bw=(W-pl*2)/buckets.length;
+  const bars=buckets.map((b,i)=>{const h=(b.v/max)*(H-pb-16);const x=pl+i*bw+bw*.15;const y=H-pb-h;const isT=A.period!=="day"&&b.s===dayStart(Date.now());
+    return `<g><title>${b.l}: ${money(b.v)}</title><rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${(bw*.7).toFixed(1)}" height="${Math.max(h,1).toFixed(1)}" rx="3" fill="${isT?"#F4B740":"#3ED3E6"}" opacity="${b.we?1:.8}"/>${(buckets.length<=14||i%3===0)?`<text x="${(x+bw*.35).toFixed(1)}" y="${H-6}" text-anchor="middle">${b.l}</text>`:""}</g>`}).join("");
+  const zIds=[...new Set([...S.zones.map(z=>z.id),...st.rev.map(b=>b.zoneId)])];
+  const byZone=zIds.map(id=>({z:zoneById(id)||{name:"удалённая",color:"#888"},v:st.rev.filter(b=>b.zoneId===id).reduce((a,b)=>a+b.total,0)}));
+  const zmax=Math.max(1,...byZone.map(x=>x.v));
+  const staffRev={};st.rev.forEach(b=>{const [k,p]=shiftKeyFor(b.start);const sid=S.shifts[k]&&S.shifts[k][p];if(sid)staffRev[sid]=(staffRev[sid]||0)+b.total});
+  const smax=Math.max(1,...Object.values(staffRev));
+  const staffShown=S.allStaff.filter(s=>s.active||staffRev[s.id]);
+  const upcoming=S.bookings.filter(b=>statusOf(b)==="booked"&&b.start>Date.now()-15*60e3).sort((a,b)=>a.start-b.start).slice(0,8);
+  const sh=shiftNow();const total=S.zones.reduce((a,z)=>a+z.seats,0);const free=S.zones.reduce((a,z)=>a+freeNow(z).length,0);
+  m.innerHTML=`<div class="page-head"><div><h2>Обзор</h2><div class="muted">Сейчас занято ${total-free} из ${total} мест${sh?`, на смене ${esc(sh.name)}`:""}</div></div>
+    <div class="seg" role="group" aria-label="Период">${["day","week","month"].map(p=>`<button type="button" data-period="${p}" aria-pressed="${A.period===p}">${{day:"День",week:"Неделя",month:"Месяц"}[p]}</button>`).join("")}</div></div>
+  <div class="kpis">
+    <div class="kpi"><span>Выручка ${lbl}</span><b class="num">${money(st.revenue)}</b>${delta(st.revenue,pv.revenue)}</div>
+    <div class="kpi"><span>Броней</span><b class="num">${st.count}</b>${delta(st.count,pv.count)}</div>
+    <div class="kpi"><span>Продано часов (место × час)</span><b class="num">${st.seatHours}</b>${delta(st.seatHours,pv.seatHours)}</div>
+    <div class="kpi"><span>Средний чек</span><b class="num">${money(st.avg)}</b>${delta(st.avg,pv.avg)}</div>
+    <div class="kpi"><span>Загрузка зала</span><b class="num">${st.load.toFixed(0)}%</b><small class="muted">от всех мест круглосуточно</small></div>
+    <div class="kpi"><span>Отмены и неявки</span><b class="num">${st.cancelled}</b><small class="muted">не входят в выручку</small></div>
+  </div>
+  <div class="grid2">
+    <div class="card"><b>Выручка ${A.period==="day"?"по часам начала брони":"по дням"}</b>${st.revenue?`<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="График выручки">${bars}</svg>`:`<div class="empty">За этот период броней пока нет.</div>`}</div>
+    <div class="card"><b>По зонам</b>${byZone.map(x=>`<div class="bar-row"><span>${esc(x.z.name)}</span><div class="track"><div class="fill" style="width:${(x.v/zmax*100).toFixed(1)}%;background:${x.z.color}"></div></div><b>${money(x.v)}</b></div>`).join("")}
+      <div style="margin-top:18px"><b>По администраторам на смене</b>${staffShown.map(s=>`<div class="bar-row"><span>${esc(s.name)}</span><div class="track"><div class="fill" style="width:${((staffRev[s.id]||0)/smax*100).toFixed(1)}%;background:${s.color}"></div></div><b>${money(staffRev[s.id]||0)}</b></div>`).join("")||`<p class="muted">Назначьте смены, и здесь появится выручка по сотрудникам.</p>`}</div></div>
+  </div>
+  <div class="card mt"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px"><b>Ближайшие брони</b><button class="btn ghost sm" type="button" data-goto="bookings">Все брони</button></div>
+    ${upcoming.length?`<div class="tbl-wrap"><table><thead><tr><th>Когда</th><th>Гость</th><th>Зона и места</th><th>Часы</th><th>Сумма</th><th>Код</th></tr></thead><tbody>${upcoming.map(b=>{const z=zoneById(b.zoneId);return `<tr><td>${dLabel(b.start)}, <b>${hm(b.start)}</b></td><td>${esc(b.name)}<br><span class="muted">${esc(b.phone)}</span></td><td><span class="badge"><i style="background:${z?z.color:"#888"}"></i>${esc(z?z.name:"—")}</span> ${b.seats.map(seatNum).join(", ")}</td><td>${b.hours} ч</td><td class="num">${money(b.total)}</td><td><b>${esc(b.code)}</b></td></tr>`}).join("")}</tbody></table></div>`:`<div class="empty">Предстоящих броней нет.</div>`}</div>`;
+  $$("[data-period]",m).forEach(b=>b.addEventListener("click",()=>{A.period=b.dataset.period;render()}));
+  $$("[data-goto]",m).forEach(b=>b.addEventListener("click",()=>{A.tab=b.dataset.goto;render()}));
+}
+
+/* ---- hall ---- */
+function aHall(m){
+  const now=Date.now();
+  m.innerHTML=`<div class="page-head"><div><h2>Зал сейчас</h2><div class="muted">Нажмите на место, чтобы посадить гостя без брони, отметить приход, завершить сеанс или отправить место на обслуживание.</div></div>
+    <div class="legend"><span><i style="border:1.5px solid var(--std)"></i>свободно</span><span><i style="background:repeating-linear-gradient(135deg,#2a2d57 0 3px,#1d1f40 3px 6px)"></i>занято</span><span><i style="background:#26172a;border:1px solid #5a3346"></i>обслуживание</span></div></div>
+    ${S.zones.map(z=>`<div class="map mt" style="--zc:${z.color}"><div class="map-head"><b>${esc(z.name)}</b><span class="muted">свободно ${freeNow(z).length} из ${z.seats}</span></div>
+      <div class="seats" style="--cols:${z.cols}">${seatIds(z).map(id=>{const s=seatState(id,now,now+60e3);const tag=s.b?esc(s.b.name.split(" ")[0]):"";
+        return `<button type="button" class="seat ${s.st}" data-hseat="${id}" style="--zc:${z.color}" aria-label="Место ${seatNum(id)}"><span class="scr">${seatNum(id)}</span><span class="stand"></span>${tag?`<span class="who">${tag}</span>`:""}</button>`}).join("")}</div></div>`).join("")||`<div class="card empty">Добавьте зоны в разделе «Зоны и цены».</div>`}`;
+  m.onclick=hallClick;
+}
+function hallClick(e){
+  const btn=e.target.closest("[data-hseat]");if(!btn)return;const id=btn.dataset.hseat;const z=zoneById(zoneOfSeat(id));const n=seatNum(id);const now=Date.now();const s=seatState(id,now,now+60e3);
+  let info="";
+  if(s.b) info=`<p>Бронь <b>${esc(s.b.code)}</b>: ${esc(s.b.name)}${s.b.phone?", "+esc(s.b.phone):""}<br>${hm(s.b.start)}–${hm(bEnd(s.b))}, ${money(s.b.total)}</p>`;
+  else if(s.st==="rep") info=`<p>На обслуживании${s.m.note?`: ${esc(s.m.note)}`:""}</p>`;
+  else{const nb=S.bookings.filter(x=>isActive(x)&&x.seats.includes(id)&&x.start>now).sort((a,c)=>a.start-c.start)[0];info=`<p class="muted">Свободно. Ближайшая бронь: ${nb?`${dLabel(nb.start)} в ${hm(nb.start)}, ${esc(nb.name)}`:"нет"}</p>`}
+  openModal(`<div class="seat-pop"><h4>${esc(z.name)}, место ${n}</h4>${info}
+    <div class="pop-actions">
+      ${s.st==="free"?`<div class="row"><select id="mHours" aria-label="На сколько часов">${[1,2,3,4,5,6,8,12].map(h=>`<option value="${h}">${h} ч</option>`).join("")}</select><button class="btn" type="button" data-act="walkin">Посадить гостя без брони</button></div>
+        <input type="text" id="mNote" placeholder="Имя гостя (необязательно)" maxlength="40">`:""}
+      ${s.b&&s.b.status==="booked"?`<button class="btn" type="button" data-act="arrived">Гость пришёл</button>`:""}
+      ${s.b?`<button class="btn ghost" type="button" data-act="finish">Завершить сейчас</button>`:""}
+      ${s.st==="rep"?`<button class="btn" type="button" data-act="unrepair">Вернуть в работу</button>`:s.st==="free"?`<input type="text" id="mRep" placeholder="Причина обслуживания, например «меняем мышь»" maxlength="60"><button class="btn danger" type="button" data-act="repair">На обслуживание</button>`:""}
+      <button class="btn ghost" type="button" data-close>Закрыть</button></div></div>`,
+  mm=>mm.addEventListener("click",async ev=>{const a=ev.target.closest("[data-act]");if(!a||a.disabled)return;a.disabled=true;const act0=a.dataset.act;let ok=false;
+    if(act0==="walkin"){const h=+$("#mHours").value;const start=Date.now();const name=$("#mNote").value.trim()||"Гость без брони";
+      ok=await act(sb.from("club_bookings").insert(toRow({code:mkCode(),name,phone:"",zoneId:z.id,seats:[id],start,hours:h,total:calcPrice(z,start,h,1,priceClub()).total,status:"arrived",source:"walkin",comment:"Посажен с карты зала"})),"Гость посажен");}
+    if(act0==="arrived") ok=await act(sb.from("club_bookings").update({status:"arrived"}).eq("id",s.b.id),"Отмечено: гость пришёл");
+    if(act0==="finish"){const b=s.b;const used=Math.min(b.hours,Math.max(1,Math.ceil((Date.now()-b.start)/HOUR)));
+      if(b.seats.length>1){const rest=b.seats.filter(x=>x!==id);
+        const r1=await sb.from("club_bookings").update({seats:rest.map(seatNum),total:calcPrice(z,b.start,b.hours,rest.length,priceClub()).total}).eq("id",b.id);
+        if(r1.error){toast(errText(r1.error))}else ok=await act(sb.from("club_bookings").insert(toRow({...b,code:mkCode(),seats:[id],hours:used,total:calcPrice(z,b.start,used,1,priceClub()).total,status:"done"})),"Сеанс на месте завершён");}
+      else ok=await act(sb.from("club_bookings").update({hours:used,total:calcPrice(z,b.start,used,1,priceClub()).total,status:"done"}).eq("id",b.id),`Сеанс завершён, ${used} ч`);}
+    if(act0==="repair") ok=await act(sb.from("club_repairs").insert({zone_id:z.id,seat:n,note:$("#mRep").value.trim()}),"Место отправлено на обслуживание");
+    if(act0==="unrepair") ok=await act(sb.from("club_repairs").delete().eq("zone_id",z.id).eq("seat",n),"Место снова в работе");
+    if(ok) closeModal(); else a.disabled=false;}));
+}
+
+/* ---- bookings ---- */
+function aBookings(m){
+  const today=dayStart(Date.now());let list=S.bookings.slice();
+  if(A.bDate==="today")list=list.filter(b=>b.start>=today&&b.start<today+DAY);
+  else if(A.bDate==="tomorrow")list=list.filter(b=>b.start>=today+DAY&&b.start<today+2*DAY);
+  else if(A.bDate==="upcoming")list=list.filter(b=>isActive(b)||(b.start>=Date.now()&&statusOf(b)!=="cancelled"));
+  else if(A.bDate==="week")list=list.filter(b=>b.start>=today-6*DAY&&b.start<today+DAY);
+  else if(/^\d{4}-/.test(A.bDate))list=list.filter(b=>dayKey(b.start)===A.bDate);
+  if(A.bZone!=="all")list=list.filter(b=>b.zoneId===A.bZone);
+  if(A.bStatus!=="all")list=list.filter(b=>statusOf(b)===A.bStatus);
+  if(A.q){const q=A.q.toLowerCase();list=list.filter(b=>(b.name+" "+b.phone+" "+b.code).toLowerCase().includes(q))}
+  const asc=["today","tomorrow","upcoming"].includes(A.bDate);list.sort((a,b)=>asc?a.start-b.start:b.start-a.start);
+  const sum=list.filter(countsRevenue).reduce((a,b)=>a+b.total,0);
+  const src={site:"сайт",admin:"админ",walkin:"без брони"};
+  m.innerHTML=`<div class="page-head"><div><h2>Брони</h2><div class="muted">${list.length} ${plural(list.length,"бронь","брони","броней")}, в выручку идёт ${money(sum)}</div></div><button class="btn" type="button" id="newB">Новая бронь</button></div>
+  <div class="filters">
+    <div class="seg" role="group" aria-label="Период">${[["today","Сегодня"],["tomorrow","Завтра"],["upcoming","Предстоящие"],["week","7 дней"],["all","Последние 2 месяца"]].map(([k,n])=>`<button type="button" data-bd="${k}" aria-pressed="${A.bDate===k}">${n}</button>`).join("")}</div>
+    <input type="date" id="bDay" value="${/^\d{4}-/.test(A.bDate)?A.bDate:""}" aria-label="Конкретный день">
+    <select id="bZone" aria-label="Зона"><option value="all">Все зоны</option>${S.allZones.map(z=>`<option value="${z.id}" ${A.bZone===z.id?"selected":""}>${esc(z.name)}${z.active?"":" (удалена)"}</option>`).join("")}</select>
+    <select id="bStatus" aria-label="Статус"><option value="all">Все статусы</option>${Object.entries(STATUS).map(([k,v])=>`<option value="${k}" ${A.bStatus===k?"selected":""}>${v.n}</option>`).join("")}</select>
+    <input type="text" id="bQ" placeholder="Поиск: имя, телефон или код" value="${esc(A.q)}">
+  </div>
+  ${list.length?`<div class="tbl-wrap"><table><thead><tr><th>Когда</th><th>Гость</th><th>Зона и места</th><th>Часы</th><th>Сумма</th><th>Код</th><th>Оформлена</th><th>Статус</th></tr></thead><tbody>
+  ${list.slice(0,300).map(b=>{const z=zoneById(b.zoneId);const st=statusOf(b);return `<tr><td>${dLabel(b.start)}<br><b>${hm(b.start)}–${hm(bEnd(b))}</b></td>
+    <td><b>${esc(b.name)}</b><br><span class="muted">${b.phone?`<a href="tel:${esc(b.phone.replace(/[^\d+]/g,""))}" style="color:var(--muted)">${esc(b.phone)}</a>`:"—"}</span></td>
+    <td><span class="badge"><i style="background:${z?z.color:"#888"}"></i>${esc(z?z.name:"удалена")}</span><br><span class="muted">${b.seats.length} шт.: ${b.seats.map(seatNum).join(", ")}</span></td>
+    <td>${b.hours} ч</td><td class="num"><b>${money(b.total)}</b></td><td><b>${esc(b.code)}</b></td>
+    <td class="muted">${dLabel(b.createdAt)}, ${hm(b.createdAt)}<br>${src[b.source]||esc(b.source)}</td>
+    <td><select data-st="${b.id}" aria-label="Статус брони ${esc(b.code)}" style="border-color:${STATUS[st].c}">${Object.entries(STATUS).map(([k,v])=>`<option value="${k}" ${st===k?"selected":""}>${v.n}</option>`).join("")}</select></td></tr>`}).join("")}
+  </tbody></table></div>${list.length>300?`<p class="muted">Показаны первые 300. Уточните фильтр.</p>`:""}`:`<div class="card empty">Броней с такими условиями нет.</div>`}`;
+  $$("[data-bd]",m).forEach(b=>b.addEventListener("click",()=>{A.bDate=b.dataset.bd;render()}));
+  $("#bDay").addEventListener("change",e=>{A.bDate=e.target.value||"today";render()});
+  $("#bZone").addEventListener("change",e=>{A.bZone=e.target.value;render()});
+  $("#bStatus").addEventListener("change",e=>{A.bStatus=e.target.value;render()});
+  let qt;$("#bQ").addEventListener("input",e=>{clearTimeout(qt);qt=setTimeout(()=>{A.q=e.target.value;render();const i=$("#bQ");i.focus();i.setSelectionRange(i.value.length,i.value.length)},250)});
+  $$("[data-st]",m).forEach(s=>s.addEventListener("change",async()=>{s.disabled=true;const v=s.value;const ok=await act(sb.from("club_bookings").update({status:v}).eq("id",s.dataset.st),`Статус: ${STATUS[v].n}`);if(!ok)render()}));
+  $("#newB").addEventListener("click",newBookingModal);
+}
+function newBookingModal(){
+  const n=new Date();const mins=Math.ceil((n.getHours()*60+n.getMinutes())/30)*30;
+  openModal(`<h3 style="font-family:var(--display);margin:0 0 14px">Новая бронь</h3>
+    <label class="field-label">Имя гостя</label><input type="text" id="nbName" maxlength="40">
+    <label class="field-label mt">Телефон</label><input type="tel" id="nbPhone" value="+7 " maxlength="20">
+    <div class="row mt"><div><label class="field-label">Зона</label><select id="nbZone">${S.zones.map(z=>`<option value="${z.id}">${esc(z.name)}</option>`).join("")}</select></div>
+    <div><label class="field-label">Мест</label><input type="number" id="nbCount" value="1" min="1" max="200"></div></div>
+    <div class="row mt"><div><label class="field-label">Дата</label><input type="date" id="nbDate" value="${dayKey(Date.now()+(mins>=1440?DAY:0))}"></div>
+    <div><label class="field-label">Начало</label><input type="text" id="nbTime" value="${pad(Math.floor(mins/60)%24)}:${pad(mins%60)}" placeholder="18:30"></div>
+    <div><label class="field-label">Часов</label><input type="number" id="nbHours" value="2" min="1" max="24"></div></div>
+    <label class="field-label mt">Комментарий</label><input type="text" id="nbComment" maxlength="200" placeholder="Например, день рождения">
+    <div class="err" id="nbErr"></div><p class="muted" style="font-size:13px" id="nbInfo"></p>
+    <div class="row mt"><button class="btn ghost" data-close type="button">Отмена</button><button class="btn" id="nbSave" type="button">Сохранить бронь</button></div>`,
+  mm=>{
+    const calc=()=>{const z=zoneById($("#nbZone").value);if(!z)return null;const dk=$("#nbDate").value;const tm=$("#nbTime").value.trim().match(/^(\d{1,2}):(\d{2})$/);
+      if(!dk||!tm||+tm[1]>23||+tm[2]>59)return null;const start=keyToTs(dk)+(+tm[1])*HOUR+(+tm[2])*60e3;const hours=Math.max(1,Math.min(24,+$("#nbHours").value||1));const cnt=Math.max(1,+$("#nbCount").value||1);
+      const free=seatIds(z).filter(id=>seatState(id,start,start+hours*HOUR).st==="free");return {z,start,hours,cnt,free,price:calcPrice(z,start,hours,cnt,priceClub()).total}};
+    const upd=()=>{const c=calc();$("#nbInfo").textContent=c?`Свободно ${c.free.length} из ${c.z.seats} на это время, сумма ${money(c.price)}`:"Проверьте дату и время."};
+    mm.addEventListener("input",upd);upd();
+    $("#nbSave").addEventListener("click",async()=>{const c=calc();const name=$("#nbName").value.trim();const err=$("#nbErr");err.textContent="";
+      if(!c){err.textContent="Время в формате 18:30.";return} if(name.length<2){err.textContent="Укажите имя гостя.";return}
+      if(c.free.length<c.cnt){err.textContent=`На это время свободно только ${c.free.length} ${plural(c.free.length,"место","места","мест")}.`;return}
+      $("#nbSave").disabled=true;
+      const ok=await act(sb.from("club_bookings").insert(toRow({code:mkCode(),name,phone:normPhone($("#nbPhone").value)||"",zoneId:c.z.id,seats:c.free.slice(0,c.cnt),start:c.start,hours:c.hours,total:c.price,status:"booked",source:"admin",comment:$("#nbComment").value.trim()})),"Бронь сохранена");
+      if(ok)closeModal();else $("#nbSave").disabled=false});
+  });
+}
+
+/* ---- shifts ---- */
+function aShifts(m){
+  const today=dayStart(Date.now());
+  if(A.weekStart===null){const wd=(new Date(today).getDay()+6)%7;A.weekStart=today-wd*DAY}
+  const days=Array.from({length:7},(_,i)=>dayStart(A.weekStart+i*DAY+3*HOUR));
+  const opt=sel=>`<option value="">не назначен</option>`+S.allStaff.filter(s=>s.active||s.id===sel).map(s=>`<option value="${s.id}" ${sel===s.id?"selected":""}>${esc(s.name)}</option>`).join("");
+  const cell=(t,part)=>{const k=dayKey(t);const sid=S.shifts[k]&&S.shifts[k][part];const s=S.allStaff.find(x=>x.id===sid);
+    return `<div class="slot ${t===today?"today":""}">${s?`<div class="who"><span class="dot" style="background:${s.color};box-shadow:0 0 6px ${s.color}"></span>${esc(s.name)}</div>`:`<div class="who muted">Никого</div>`}<select data-shift="${k}|${part}" aria-label="${part==="day"?"Дневная":"Ночная"} смена ${k}">${opt(sid)}</select></div>`};
+  const cnt={};days.forEach(t=>{const v=S.shifts[dayKey(t)];if(v)["day","night"].forEach(p=>{if(v[p])cnt[v[p]]=(cnt[v[p]]||0)+1})});
+  const sh=shiftNow();
+  m.innerHTML=`<div class="page-head"><div><h2>Смены</h2><div class="muted">Сейчас на смене: <b style="color:var(--text)">${sh?esc(sh.name):"никто не назначен"}</b>. Это имя видят гости на сайте.</div></div>
+    <div class="seg"><button type="button" id="wPrev" aria-label="Прошлая неделя">‹</button><button type="button" id="wNow">Эта неделя</button><button type="button" id="wNext" aria-label="Следующая неделя">›</button></div></div>
+  <div class="map" style="padding:14px"><div class="week">
+    <div></div>${days.map(t=>{const d=new Date(t);return `<div class="hd ${t===today?"today":""}">${WD[d.getDay()]}<b>${d.getDate()} ${MON[d.getMonth()]}</b></div>`}).join("")}
+    <div class="lbl">День<span class="muted" style="font-weight:500">08:00–20:00</span></div>${days.map(t=>cell(t,"day")).join("")}
+    <div class="lbl">Ночь<span class="muted" style="font-weight:500">20:00–08:00</span></div>${days.map(t=>cell(t,"night")).join("")}
+  </div></div>
+  <div class="row mt"><button class="btn ghost sm" type="button" id="copyWeek" style="flex:none">Скопировать эту неделю на следующую</button></div>
+  <div class="grid2 mt">
+    <div><h3 style="font-family:var(--display);font-size:18px;margin:10px 0 12px">Сотрудники</h3><div class="staff-list">${S.staff.map(s=>`<div class="staff"><div class="ava" style="background:${s.color}">${esc(s.name[0]||"?")}</div><div class="grow"><b>${esc(s.name)}</b><small>${esc(s.phone||"без телефона")}, ${cnt[s.id]||0} ${plural(cnt[s.id]||0,"смена","смены","смен")} на этой неделе</small></div><button class="btn danger sm" type="button" data-del-staff="${s.id}">Удалить</button></div>`).join("")||`<div class="empty">Добавьте первого сотрудника.</div>`}</div></div>
+    <div class="card" style="align-self:start"><b>Добавить сотрудника</b>
+      <label class="field-label mt" for="stName">Имя</label><input type="text" id="stName" placeholder="Например, Дана" maxlength="30">
+      <label class="field-label mt" for="stPhone">Телефон</label><input type="tel" id="stPhone" placeholder="+7 7__ ___ __ __" maxlength="20">
+      <div class="err" id="stErr"></div><button class="btn block mt" type="button" id="stAdd">Добавить</button></div>
+  </div>`;
+  $$("[data-shift]",m).forEach(s=>s.addEventListener("change",()=>{const [k,p]=s.dataset.shift.split("|");s.disabled=true;
+    act(sb.from("club_shifts").upsert({day:k,part:p,staff_id:s.value||null}),"Смена сохранена")}));
+  $("#wPrev").onclick=()=>{A.weekStart-=7*DAY;render()};$("#wNext").onclick=()=>{A.weekStart+=7*DAY;render()};$("#wNow").onclick=()=>{A.weekStart=null;render()};
+  $("#copyWeek").onclick=async()=>{const rows=[];days.forEach(t=>{const src=S.shifts[dayKey(t)];if(src)["day","night"].forEach(p=>{if(src[p]!==undefined)rows.push({day:dayKey(dayStart(t+7*DAY+3*HOUR)),part:p,staff_id:src[p]||null})})});
+    if(!rows.length){toast("На этой неделе нет смен для копирования");return}
+    if(await act(sb.from("club_shifts").upsert(rows),"Скопировано на следующую неделю")){A.weekStart+=7*DAY;render()}};
+  $("#stAdd").onclick=async()=>{const n=$("#stName").value.trim();if(n.length<2){$("#stErr").textContent="Укажите имя.";return}
+    const pal=["#3ED3E6","#FF5C93","#F4B740","#8C7CFF","#5BE39B","#FF9F43","#62A8FF"];
+    $("#stAdd").disabled=true;await act(sb.from("club_staff").insert({name:n,phone:normPhone($("#stPhone").value)||"",color:pal[S.allStaff.length%pal.length]}),`${n}: добавлен(а)`)};
+  $$("[data-del-staff]",m).forEach(b=>b.addEventListener("click",()=>{const s=S.staff.find(x=>x.id===b.dataset.delStaff);
+    confirmModal(`Удалить ${s.name}?`,"Сотрудник пропадёт из списка для новых смен. Прошлые смены и выручка по ним сохранятся.","Удалить",()=>act(sb.from("club_staff").update({active:false}).eq("id",s.id),"Сотрудник удалён"))}));
+}
+
+/* ---- zones & prices ---- */
+function aZones(m){
+  m.innerHTML=`<div class="page-head"><div><h2>Зоны и цены</h2><div class="muted">Изменения сохраняются сразу и видны гостям на сайте.</div></div><button class="btn" type="button" id="zAdd">Добавить зону</button></div>
+  <div class="zedit">${S.zones.map(z=>`<div class="zrow" style="--zc:${z.color}" data-z="${z.id}">
+    <label class="wide">Название<input type="text" data-f="name" value="${esc(z.name)}" maxlength="30"></label>
+    <label>Тип<select data-f="kind">${Object.entries(KIND).map(([k,v])=>`<option value="${k}" ${z.kind===k?"selected":""}>${v.n}</option>`).join("")}</select></label>
+    <label>Мест (ПК)<input type="number" data-f="seats" min="1" max="200" value="${z.seats}"></label>
+    <label>В ряду на карте<input type="number" data-f="cols" min="1" max="12" value="${z.cols}"></label>
+    <label>Цена днём, ₸/час<input type="number" data-f="price" min="0" step="50" value="${z.price}"></label>
+    <label>Цена ночью, ₸/час<input type="number" data-f="night" min="0" step="50" value="${z.night}"></label>
+    <label>Порядок на сайте<input type="number" data-f="sort" min="0" max="999" value="${z.sort}"></label>
+    <label>Цвет<input type="color" data-f="color" value="${z.color}"></label>
+    <label class="wide" style="grid-column:1/-1">Характеристики (через запятую, гости видят под картой)<input type="text" data-f="specs" value="${esc(z.specs)}" maxlength="200"></label>
+    <div style="grid-column:1/-1;display:flex;justify-content:flex-end"><button class="btn danger sm" type="button" data-zdel="${z.id}">Удалить зону</button></div></div>`).join("")||`<div class="card empty">Зон пока нет. Добавьте первую.</div>`}</div>
+  <div class="grid2 mt">
+    <div class="card"><b>Клуб</b>
+      <div class="row mt"><div><label class="field-label">Название</label><input type="text" id="cfName" value="${esc(S.club.name)}" maxlength="40"></div><div><label class="field-label">Телефон</label><input type="tel" id="cfPhone" value="${esc(S.club.phone)}" maxlength="20"></div></div>
+      <div class="row mt"><div><label class="field-label">Адрес</label><input type="text" id="cfAddr" value="${esc(S.club.address)}" maxlength="80"></div><div><label class="field-label">Часы работы</label><input type="text" id="cfHours" value="${esc(S.club.hours)}" maxlength="40"></div></div>
+      <div class="row mt"><div><label class="field-label">Ночной тариф с (час)</label><input type="number" id="cfNf" min="0" max="23" value="${S.club.nightFrom}"></div><div><label class="field-label">до (час)</label><input type="number" id="cfNt" min="0" max="23" value="${S.club.nightTo}"></div><div><label class="field-label">Бронь вперёд, дней</label><input type="number" id="cfDays" min="1" max="14" value="${S.club.maxDays}"></div></div>
+      <button class="btn mt" type="button" id="cfSave">Сохранить настройки клуба</button></div>
+    <div class="card" style="align-self:start"><b>Ваш аккаунт</b><p class="muted" style="font-size:14px">${esc(me.email)}</p>
+      <label class="field-label" for="np">Новый пароль</label><input type="password" id="np" autocomplete="new-password" placeholder="Минимум 8 символов">
+      <button class="btn ghost sm mt" type="button" id="npSave">Сменить пароль</button>
+      <p class="note mt">Новых администраторов добавляет владелец в Supabase (инструкция в README).</p></div>
+  </div>`;
+  m.querySelectorAll(".zrow").forEach(row=>row.addEventListener("change",async e=>{const f=e.target.dataset.f;if(!f)return;const z=zoneById(row.dataset.z);let v=e.target.value;
+    if(["seats","cols","price","night","sort"].includes(f)){v=Math.round(+v||0);v=Math.max(["price","night","sort"].includes(f)?0:1,v);if(f==="cols")v=Math.min(12,v);if(f==="seats")v=Math.min(200,v)}
+    if(f==="name"&&!String(v).trim()){e.target.value=z.name;return}
+    if(f==="seats"&&v<z.seats){const cut=seatIds(z).slice(v);const fut=S.bookings.filter(b=>b.zoneId===z.id&&isActive(b)&&b.seats.some(s=>cut.includes(s)));
+      if(fut.length){toast(`Нельзя: на места ${cut.map(seatNum).join(", ")} есть активные брони (${fut.length})`);e.target.value=z.seats;return}
+      const rep=cut.filter(s=>S.manual[s]);if(rep.length){const r=await sb.from("club_repairs").delete().eq("zone_id",z.id).gt("seat",v);if(r.error){toast(errText(r.error));return}}}
+    e.target.blur();await act(sb.from("club_zones").update({[f]:v}).eq("id",z.id),"Сохранено")}));
+  $$("[data-zdel]",m).forEach(b=>b.addEventListener("click",()=>{const z=zoneById(b.dataset.zdel);const fut=S.bookings.filter(x=>x.zoneId===z.id&&isActive(x)).length;
+    if(fut){toast(`У зоны ${fut} активных броней. Сначала отмените или завершите их.`);return}
+    confirmModal(`Удалить зону «${z.name}»?`,"Гости перестанут её видеть. Прошлые брони останутся в отчётах.","Удалить",()=>act(sb.from("club_zones").update({active:false}).eq("id",z.id),"Зона удалена"))}));
+  $("#zAdd").onclick=async()=>{const id="z"+Math.random().toString(36).slice(2,8).replace(/[^a-z0-9]/g,"x");const sort=Math.max(0,...S.allZones.map(z=>z.sort))+1;
+    await act(sb.from("club_zones").insert({id,name:"Новая зона",kind:"other",color:KIND.other.c,seats:4,cols:4,price:1000,night:800,specs:"",sort}),"Зона добавлена внизу списка")};
+  $("#cfSave").onclick=()=>act(sb.from("club_settings").update({name:$("#cfName").value.trim()||S.club.name,phone:$("#cfPhone").value.trim(),address:$("#cfAddr").value.trim(),hours:$("#cfHours").value.trim(),
+      night_from:Math.min(23,Math.max(0,+$("#cfNf").value|0)),night_to:Math.min(23,Math.max(0,+$("#cfNt").value|0)),max_days_ahead:Math.min(14,Math.max(1,+$("#cfDays").value|0)),updated_at:new Date().toISOString()}).eq("id",1),"Настройки клуба сохранены");
+  $("#npSave").onclick=async()=>{const p=$("#np").value;if(p.length<8){toast("Пароль минимум 8 символов");return}const {error}=await sb.auth.updateUser({password:p});if(error){toast(errText(error));return}$("#np").value="";toast("Пароль изменён")};
+}
+
+/* ---------- bind ---------- */
+$("#loginBtn").addEventListener("click",login);
+["#email","#pass"].forEach(s=>$(s).addEventListener("keydown",e=>{if(e.key==="Enter")login()}));
+$("#msgLogout").addEventListener("click",logout);
+$("#logout").addEventListener("click",logout);
+$("#toSite").addEventListener("click",()=>window.open("../","_blank"));
+$("#side").addEventListener("click",e=>{const b=e.target.closest("[data-tab]");if(!b)return;A.tab=b.dataset.tab;render();window.scrollTo(0,0)});
+boot();
+})();
+</script>
+</body>
+</html>
