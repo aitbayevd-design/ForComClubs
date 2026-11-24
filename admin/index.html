@@ -245,6 +245,30 @@ td select{padding:6px 8px;border-radius:8px;font-size:13px;width:auto}
 .banner{background:color-mix(in srgb,var(--warn) 14%,var(--panel));border:1px solid color-mix(in srgb,var(--warn) 50%,transparent);border-radius:var(--r-md);padding:14px 16px;margin:16px 0}
 .skeleton{opacity:.5;pointer-events:none}
 .live-tag{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+.hchart{display:flex;align-items:stretch;gap:6px;height:240px;margin-top:14px}
+.hcol{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:flex-end;align-items:center}
+.hcol em{font-style:normal;font-size:12px;font-weight:700;color:var(--muted);margin-bottom:6px;white-space:nowrap}
+.hbar{width:72%;max-width:64px;border-radius:5px 5px 2px 2px}
+.hcol span{font-size:12px;color:var(--dim);margin-top:8px;white-space:nowrap;line-height:1}
+.hcol:hover .hbar{filter:brightness(1.2)}
+.led.later{background:transparent;box-shadow:inset 0 0 0 1.5px var(--zc)}
+.strip .later-note{display:block;font-family:var(--body);font-size:12.5px;font-weight:600;color:var(--zc);text-align:right;margin-top:2px}
+.led-legend{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin-top:4px}
+.led-legend span{display:flex;align-items:center;gap:7px}
+.led-legend i{width:14px;height:10px;border-radius:2px;display:inline-block}
+.promo{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.promo .chip{border-style:dashed}
+.promo .chip b{font-family:var(--display);font-size:14px;color:var(--accent)}
+.sum-line.disc b{color:var(--ok)}
+.total s{font-size:15px;color:var(--dim);font-family:var(--body);font-weight:600;margin-right:8px}
+.pkg-tag{display:inline-block;font-size:11.5px;font-weight:800;color:#14152E;background:var(--ok);border-radius:6px;padding:1px 6px;margin-left:6px;vertical-align:1px}
+.promo-strip{display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:linear-gradient(90deg,color-mix(in srgb,var(--ok) 14%,var(--panel)),var(--panel));border:1px solid color-mix(in srgb,var(--ok) 40%,var(--line));border-radius:var(--r-md);padding:12px 16px;margin-top:14px;font-weight:600}
+.promo-strip b{font-family:var(--display);color:var(--ok)}
+.pk-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--bg-2);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-top:10px}
+.pk-row input[type=number]{width:70px}
+.pk-row .zl{display:flex;flex-wrap:wrap;gap:8px;flex:1;min-width:200px;font-size:13px;color:var(--muted)}
+.pk-row label{display:flex;align-items:center;gap:5px;cursor:pointer}
+.switch{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700}
 </style>
 </head>
 <body>
@@ -331,10 +355,15 @@ function normPhone(v){let d=String(v||"").replace(/\D/g,"");if(d.length===12&&d[
 function hourIn(ts,tz){try{return +new Intl.DateTimeFormat("en-GB",{hour:"numeric",hourCycle:"h23",timeZone:tz||"Asia/Almaty"}).format(new Date(ts))}catch(e){return new Date(ts).getHours()}}
 function isNight(h,club){const f=club.nightFrom,t=club.nightTo;return f>t?(h>=f||h<t):(h>=f&&h<t)}
 function calcPrice(zone,start,hours,count,club){
-  let sum=0,nH=0,dH=0;
-  for(let h=0;h<hours;h++){const hr=hourIn(start+h*HOUR,club.tz);if(isNight(hr,club)){sum+=zone.night;nH++}else{sum+=zone.price;dH++}}
-  return {total:sum*count,nH,dH};
+  // club.packages: [{pay,bonus,zones}] — лучшая акция применяется автоматически (как на сервере)
+  const h=[];let nH=0,dH=0;
+  for(let i=0;i<hours;i++){const hr=hourIn(start+i*HOUR,club.tz);if(isNight(hr,club)){h.push(zone.night);nH++}else{h.push(zone.price);dH++}}
+  const base=h.reduce((a,b)=>a+b,0);let best=0,pkg=null;
+  (club.packages||[]).forEach(p=>{if(p.active===false)return;if(p.pay+p.bonus>hours)return;if(p.zones&&p.zones.length&&!p.zones.includes(zone.id))return;
+    const d=h.slice(p.pay,p.pay+p.bonus).reduce((a,b)=>a+b,0);if(d>best){best=d;pkg=p}});
+  return {total:(base-best)*count,base:base*count,disc:best*count,pkg:pkg?pkg.pay+"+"+pkg.bonus:"",nH,dH};
 }
+const pkgsFor=(zone,club)=>(club.packages||[]).filter(p=>p.active!==false&&(!p.zones||!p.zones.length||p.zones.includes(zone.id))).sort((a,b)=>(a.pay+a.bonus)-(b.pay+b.bonus));
 function mkCode(){const a="ABCDEFHKMNPRSTXZ";return a[Math.floor(Math.random()*a.length)]+a[Math.floor(Math.random()*a.length)]+"-"+(1000+Math.floor(Math.random()*9000))}
 
 /* storage that never throws */
@@ -383,7 +412,7 @@ function errText(e){
   return "Не получилось: "+m;
 }
 
-window.Club={HOUR,DAY,KIND,STATUS,WD,MON,$,$$,esc,money,pad,dayStart,dayKey,keyToTs,hm,dLabel,plural,normPhone,hourIn,isNight,calcPrice,mkCode,store,openModal,closeModal,modalOpen,confirmModal,toast,sb,configured,errText};
+window.Club={HOUR,DAY,KIND,STATUS,WD,MON,$,$$,esc,money,pad,dayStart,dayKey,keyToTs,hm,dLabel,plural,normPhone,hourIn,isNight,calcPrice,pkgsFor,mkCode,store,openModal,closeModal,modalOpen,confirmModal,toast,sb,configured,errText};
 })();
 </script>
 <script>
@@ -401,14 +430,15 @@ function message(title,text,canLogout){$("#msgTitle").textContent=title;$("#msgT
 /* ---------- data ---------- */
 async function loadAll(){
   const today=dayStart(Date.now());
-  const [st,zs,sf,sh,rp]=await Promise.all([
+  const [st,zs,sf,sh,rp,pk]=await Promise.all([
     sb.from("club_settings").select("*").eq("id",1).single(),
     sb.from("club_zones").select("*").order("sort").order("name"),
     sb.from("club_staff").select("*").order("created_at"),
     sb.from("club_shifts").select("*").gte("day",dayKey(today-75*DAY)),
-    sb.from("club_repairs").select("*")
+    sb.from("club_repairs").select("*"),
+    sb.from("club_packages").select("*").order("created_at")
   ]);
-  const err=[st,zs,sf,sh,rp].find(r=>r.error); if(err) throw err.error;
+  const err=[st,zs,sf,sh,rp,pk].find(r=>r.error); if(err) throw err.error;
   const rows=[]; const since=new Date(today-62*DAY).toISOString();
   for(let from=0;;from+=1000){
     const {data,error}=await sb.from("club_bookings").select("*").gte("start_at",since).order("start_at").range(from,from+999);
@@ -418,9 +448,9 @@ async function loadAll(){
   const shifts={}; sh.data.forEach(r=>{(shifts[r.day]=shifts[r.day]||{})[r.part]=r.staff_id});
   const manual={}; rp.data.forEach(r=>manual[r.zone_id+"-"+r.seat]={type:"repair",note:r.note});
   S={club:{name:s.name,address:s.address,phone:s.phone,hours:s.hours,nightFrom:s.night_from,nightTo:s.night_to,tz:s.tz,maxDays:s.max_days_ahead},
-    allZones:zs.data, zones:zs.data.filter(z=>z.active), allStaff:sf.data, staff:sf.data.filter(x=>x.active), shifts, manual,
+    allZones:zs.data, zones:zs.data.filter(z=>z.active), allStaff:sf.data, staff:sf.data.filter(x=>x.active), shifts, manual, packages:pk.data,
     bookings:rows.map(b=>({id:b.id,code:b.code,name:b.name,phone:b.phone,zoneId:b.zone_id,seats:b.seats.map(n=>b.zone_id+"-"+n),
-      start:Date.parse(b.start_at),hours:b.hours,total:b.total,status:b.status,source:b.source,comment:b.comment,createdAt:Date.parse(b.created_at)}))};
+      start:Date.parse(b.start_at),hours:b.hours,total:b.total,package:b.package||"",status:b.status,source:b.source,comment:b.comment,createdAt:Date.parse(b.created_at)}))};
   loaded=true;
 }
 let reloadT=null;
@@ -451,8 +481,10 @@ function seatState(seatId,start,end){
 function freeNow(z){const n=Date.now();return seatIds(z).filter(id=>seatState(id,n,n+60e3).st==="free")}
 function shiftKeyFor(ts){const h=new Date(ts).getHours();if(h>=8&&h<20)return [dayKey(ts),"day"];if(h>=20)return [dayKey(ts),"night"];return [dayKey(ts-DAY),"night"]}
 function shiftNow(){const [k,p]=shiftKeyFor(Date.now());const sid=S.shifts[k]&&S.shifts[k][p];return S.allStaff.find(s=>s.id===sid)||null}
-const priceClub=()=>({tz:S.club.tz,nightFrom:S.club.nightFrom,nightTo:S.club.nightTo});
-const toRow=b=>({code:b.code,name:b.name,phone:b.phone||"",zone_id:b.zoneId,seats:b.seats.map(seatNum),start_at:new Date(b.start).toISOString(),hours:b.hours,total:b.total,status:b.status,source:b.source,comment:b.comment||""});
+const priceClub=()=>({tz:S.club.tz,nightFrom:S.club.nightFrom,nightTo:S.club.nightTo,packages:S.packages.filter(p=>p.active)});
+const priceFields=(z,start,h,cnt)=>{const p=calcPrice(z,start,h,cnt,priceClub());return {total:p.total,package:p.pkg}};
+const dbPrice=priceFields;
+const toRow=b=>({code:b.code,name:b.name,phone:b.phone||"",zone_id:b.zoneId,seats:b.seats.map(seatNum),start_at:new Date(b.start).toISOString(),hours:b.hours,total:b.total,status:b.status,source:b.source,comment:b.comment||"",package:b.package||""});
 
 /* ---------- auth ---------- */
 async function boot(){
@@ -519,9 +551,9 @@ function aOverview(m){
   if(A.period==="day"){for(let h=0;h<24;h++){const s=f+h*HOUR;buckets.push({l:pad(h),v:0,s,e:s+HOUR})}}
   else{const n=A.period==="week"?7:30;for(let i=0;i<n;i++){const s=f+i*DAY;const d=new Date(s);buckets.push({l:A.period==="week"?WD[d.getDay()]+" "+d.getDate():String(d.getDate()),v:0,s,e:s+DAY,we:d.getDay()===0||d.getDay()===6})}}
   st.rev.forEach(b=>{const k=buckets.find(x=>b.start>=x.s&&b.start<x.e);if(k)k.v+=b.total});
-  const max=Math.max(1,...buckets.map(b=>b.v));const W=760,H=240,pl=8,pb=24,bw=(W-pl*2)/buckets.length;
-  const bars=buckets.map((b,i)=>{const h=(b.v/max)*(H-pb-16);const x=pl+i*bw+bw*.15;const y=H-pb-h;const isT=A.period!=="day"&&b.s===dayStart(Date.now());
-    return `<g><title>${b.l}: ${money(b.v)}</title><rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${(bw*.7).toFixed(1)}" height="${Math.max(h,1).toFixed(1)}" rx="3" fill="${isT?"#F4B740":"#3ED3E6"}" opacity="${b.we?1:.8}"/>${(buckets.length<=14||i%3===0)?`<text x="${(x+bw*.35).toFixed(1)}" y="${H-6}" text-anchor="middle">${b.l}</text>`:""}</g>`}).join("");
+  const max=Math.max(1,...buckets.map(b=>b.v));const showVal=buckets.length<=7;
+  const bars=buckets.map((b,i)=>{const isT=A.period!=="day"&&b.s===dayStart(Date.now());const h=b.v?Math.max(2,b.v/max*100):0;
+    return `<div class="hcol" title="${b.l}: ${money(b.v)}">${showVal&&b.v?`<em>${money(b.v)}</em>`:""}<div class="hbar" style="height:${h.toFixed(1)}%;background:${isT?"#F4B740":"#3ED3E6"};opacity:${b.we||isT?1:.8}"></div><span>${(buckets.length<=14||i%3===0)?b.l:"&nbsp;"}</span></div>`}).join("");
   const zIds=[...new Set([...S.zones.map(z=>z.id),...st.rev.map(b=>b.zoneId)])];
   const byZone=zIds.map(id=>({z:zoneById(id)||{name:"удалённая",color:"#888"},v:st.rev.filter(b=>b.zoneId===id).reduce((a,b)=>a+b.total,0)}));
   const zmax=Math.max(1,...byZone.map(x=>x.v));
@@ -541,7 +573,7 @@ function aOverview(m){
     <div class="kpi"><span>Отмены и неявки</span><b class="num">${st.cancelled}</b><small class="muted">не входят в выручку</small></div>
   </div>
   <div class="grid2">
-    <div class="card"><b>Выручка ${A.period==="day"?"по часам начала брони":"по дням"}</b>${st.revenue?`<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="График выручки">${bars}</svg>`:`<div class="empty">За этот период броней пока нет.</div>`}</div>
+    <div class="card"><b>Выручка ${A.period==="day"?"по часам начала брони":"по дням"}</b>${st.revenue?`<div class="hchart" role="img" aria-label="График выручки">${bars}</div>`:`<div class="empty">За этот период броней пока нет.</div>`}</div>
     <div class="card"><b>По зонам</b>${byZone.map(x=>`<div class="bar-row"><span>${esc(x.z.name)}</span><div class="track"><div class="fill" style="width:${(x.v/zmax*100).toFixed(1)}%;background:${x.z.color}"></div></div><b>${money(x.v)}</b></div>`).join("")}
       <div style="margin-top:18px"><b>По администраторам на смене</b>${staffShown.map(s=>`<div class="bar-row"><span>${esc(s.name)}</span><div class="track"><div class="fill" style="width:${((staffRev[s.id]||0)/smax*100).toFixed(1)}%;background:${s.color}"></div></div><b>${money(staffRev[s.id]||0)}</b></div>`).join("")||`<p class="muted">Назначьте смены, и здесь появится выручка по сотрудникам.</p>`}</div></div>
   </div>
@@ -577,13 +609,13 @@ function hallClick(e){
       <button class="btn ghost" type="button" data-close>Закрыть</button></div></div>`,
   mm=>mm.addEventListener("click",async ev=>{const a=ev.target.closest("[data-act]");if(!a||a.disabled)return;a.disabled=true;const act0=a.dataset.act;let ok=false;
     if(act0==="walkin"){const h=+$("#mHours").value;const start=Date.now();const name=$("#mNote").value.trim()||"Гость без брони";
-      ok=await act(sb.from("club_bookings").insert(toRow({code:mkCode(),name,phone:"",zoneId:z.id,seats:[id],start,hours:h,total:calcPrice(z,start,h,1,priceClub()).total,status:"arrived",source:"walkin",comment:"Посажен с карты зала"})),"Гость посажен");}
+      ok=await act(sb.from("club_bookings").insert(toRow({code:mkCode(),name,phone:"",zoneId:z.id,seats:[id],start,hours:h,...priceFields(z,start,h,1),status:"arrived",source:"walkin",comment:"Посажен с карты зала"})),"Гость посажен");}
     if(act0==="arrived") ok=await act(sb.from("club_bookings").update({status:"arrived"}).eq("id",s.b.id),"Отмечено: гость пришёл");
     if(act0==="finish"){const b=s.b;const used=Math.min(b.hours,Math.max(1,Math.ceil((Date.now()-b.start)/HOUR)));
       if(b.seats.length>1){const rest=b.seats.filter(x=>x!==id);
-        const r1=await sb.from("club_bookings").update({seats:rest.map(seatNum),total:calcPrice(z,b.start,b.hours,rest.length,priceClub()).total}).eq("id",b.id);
-        if(r1.error){toast(errText(r1.error))}else ok=await act(sb.from("club_bookings").insert(toRow({...b,code:mkCode(),seats:[id],hours:used,total:calcPrice(z,b.start,used,1,priceClub()).total,status:"done"})),"Сеанс на месте завершён");}
-      else ok=await act(sb.from("club_bookings").update({hours:used,total:calcPrice(z,b.start,used,1,priceClub()).total,status:"done"}).eq("id",b.id),`Сеанс завершён, ${used} ч`);}
+        const r1=await sb.from("club_bookings").update({seats:rest.map(seatNum),...dbPrice(z,b.start,b.hours,rest.length)}).eq("id",b.id);
+        if(r1.error){toast(errText(r1.error))}else ok=await act(sb.from("club_bookings").insert(toRow({...b,code:mkCode(),seats:[id],hours:used,...priceFields(z,b.start,used,1),status:"done"})),"Сеанс на месте завершён");}
+      else ok=await act(sb.from("club_bookings").update({hours:used,...dbPrice(z,b.start,used,1),status:"done"}).eq("id",b.id),`Сеанс завершён, ${used} ч`);}
     if(act0==="repair") ok=await act(sb.from("club_repairs").insert({zone_id:z.id,seat:n,note:$("#mRep").value.trim()}),"Место отправлено на обслуживание");
     if(act0==="unrepair") ok=await act(sb.from("club_repairs").delete().eq("zone_id",z.id).eq("seat",n),"Место снова в работе");
     if(ok) closeModal(); else a.disabled=false;}));
@@ -615,7 +647,7 @@ function aBookings(m){
   ${list.slice(0,300).map(b=>{const z=zoneById(b.zoneId);const st=statusOf(b);return `<tr><td>${dLabel(b.start)}<br><b>${hm(b.start)}–${hm(bEnd(b))}</b></td>
     <td><b>${esc(b.name)}</b><br><span class="muted">${b.phone?`<a href="tel:${esc(b.phone.replace(/[^\d+]/g,""))}" style="color:var(--muted)">${esc(b.phone)}</a>`:"—"}</span></td>
     <td><span class="badge"><i style="background:${z?z.color:"#888"}"></i>${esc(z?z.name:"удалена")}</span><br><span class="muted">${b.seats.length} шт.: ${b.seats.map(seatNum).join(", ")}</span></td>
-    <td>${b.hours} ч</td><td class="num"><b>${money(b.total)}</b></td><td><b>${esc(b.code)}</b></td>
+    <td>${b.hours} ч</td><td class="num"><b>${money(b.total)}</b>${b.package?`<br><span class="pkg-tag" style="margin:0">${esc(b.package)}</span>`:""}</td><td><b>${esc(b.code)}</b></td>
     <td class="muted">${dLabel(b.createdAt)}, ${hm(b.createdAt)}<br>${src[b.source]||esc(b.source)}</td>
     <td><select data-st="${b.id}" aria-label="Статус брони ${esc(b.code)}" style="border-color:${STATUS[st].c}">${Object.entries(STATUS).map(([k,v])=>`<option value="${k}" ${st===k?"selected":""}>${v.n}</option>`).join("")}</select></td></tr>`}).join("")}
   </tbody></table></div>${list.length>300?`<p class="muted">Показаны первые 300. Уточните фильтр.</p>`:""}`:`<div class="card empty">Броней с такими условиями нет.</div>`}`;
@@ -643,14 +675,14 @@ function newBookingModal(){
   mm=>{
     const calc=()=>{const z=zoneById($("#nbZone").value);if(!z)return null;const dk=$("#nbDate").value;const tm=$("#nbTime").value.trim().match(/^(\d{1,2}):(\d{2})$/);
       if(!dk||!tm||+tm[1]>23||+tm[2]>59)return null;const start=keyToTs(dk)+(+tm[1])*HOUR+(+tm[2])*60e3;const hours=Math.max(1,Math.min(24,+$("#nbHours").value||1));const cnt=Math.max(1,+$("#nbCount").value||1);
-      const free=seatIds(z).filter(id=>seatState(id,start,start+hours*HOUR).st==="free");return {z,start,hours,cnt,free,price:calcPrice(z,start,hours,cnt,priceClub()).total}};
+      const free=seatIds(z).filter(id=>seatState(id,start,start+hours*HOUR).st==="free");return {z,start,hours,cnt,free,price:calcPrice(z,start,hours,cnt,priceClub()).total,pkg:calcPrice(z,start,hours,cnt,priceClub()).pkg}};
     const upd=()=>{const c=calc();$("#nbInfo").textContent=c?`Свободно ${c.free.length} из ${c.z.seats} на это время, сумма ${money(c.price)}`:"Проверьте дату и время."};
     mm.addEventListener("input",upd);upd();
     $("#nbSave").addEventListener("click",async()=>{const c=calc();const name=$("#nbName").value.trim();const err=$("#nbErr");err.textContent="";
       if(!c){err.textContent="Время в формате 18:30.";return} if(name.length<2){err.textContent="Укажите имя гостя.";return}
       if(c.free.length<c.cnt){err.textContent=`На это время свободно только ${c.free.length} ${plural(c.free.length,"место","места","мест")}.`;return}
       $("#nbSave").disabled=true;
-      const ok=await act(sb.from("club_bookings").insert(toRow({code:mkCode(),name,phone:normPhone($("#nbPhone").value)||"",zoneId:c.z.id,seats:c.free.slice(0,c.cnt),start:c.start,hours:c.hours,total:c.price,status:"booked",source:"admin",comment:$("#nbComment").value.trim()})),"Бронь сохранена");
+      const ok=await act(sb.from("club_bookings").insert(toRow({code:mkCode(),name,phone:normPhone($("#nbPhone").value)||"",zoneId:c.z.id,seats:c.free.slice(0,c.cnt),start:c.start,hours:c.hours,total:c.price,package:c.pkg,status:"booked",source:"admin",comment:$("#nbComment").value.trim()})),"Бронь сохранена");
       if(ok)closeModal();else $("#nbSave").disabled=false});
   });
 }
@@ -707,6 +739,13 @@ function aZones(m){
     <label>Цвет<input type="color" data-f="color" value="${z.color}"></label>
     <label class="wide" style="grid-column:1/-1">Характеристики (через запятую, гости видят под картой)<input type="text" data-f="specs" value="${esc(z.specs)}" maxlength="200"></label>
     <div style="grid-column:1/-1;display:flex;justify-content:flex-end"><button class="btn danger sm" type="button" data-zdel="${z.id}">Удалить зону</button></div></div>`).join("")||`<div class="card empty">Зон пока нет. Добавьте первую.</div>`}</div>
+  <div class="card mt" id="pkCard"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><div><b>Акции: часы в подарок</b><div class="muted" style="font-size:14px">Применяются автоматически: если гость берёт столько часов или больше, подарочные часы бесплатны. Из нескольких выбирается самая выгодная.</div></div><button class="btn ghost sm" type="button" id="pkAdd">Добавить акцию</button></div>
+    ${S.packages.map(p=>`<div class="pk-row" data-pk="${p.id}">
+      <span>Платит</span><input type="number" min="1" max="12" data-pf="pay" value="${p.pay}" aria-label="Оплачиваемые часы"><span>ч + в подарок</span><input type="number" min="1" max="12" data-pf="bonus" value="${p.bonus}" aria-label="Подарочные часы"><span>ч</span>
+      <div class="zl"><span>Зоны:</span><label><input type="checkbox" data-pall ${p.zones.length?"":"checked"}>все</label>${S.zones.map(z=>`<label><input type="checkbox" data-pz="${z.id}" ${p.zones.includes(z.id)?"checked":""} ${p.zones.length?"":"disabled"}>${esc(z.name)}</label>`).join("")}</div>
+      <label class="switch"><input type="checkbox" data-pf="active" ${p.active?"checked":""}>включена</label>
+      <button class="btn danger sm" type="button" data-pdel="${p.id}">Удалить</button></div>`).join("")||`<p class="muted">Акций нет.</p>`}
+  </div>
   <div class="grid2 mt">
     <div class="card"><b>Клуб</b>
       <div class="row mt"><div><label class="field-label">Название</label><input type="text" id="cfName" value="${esc(S.club.name)}" maxlength="40"></div><div><label class="field-label">Телефон</label><input type="tel" id="cfPhone" value="${esc(S.club.phone)}" maxlength="20"></div></div>
@@ -728,6 +767,15 @@ function aZones(m){
   $$("[data-zdel]",m).forEach(b=>b.addEventListener("click",()=>{const z=zoneById(b.dataset.zdel);const fut=S.bookings.filter(x=>x.zoneId===z.id&&isActive(x)).length;
     if(fut){toast(`У зоны ${fut} активных броней. Сначала отмените или завершите их.`);return}
     confirmModal(`Удалить зону «${z.name}»?`,"Гости перестанут её видеть. Прошлые брони останутся в отчётах.","Удалить",()=>act(sb.from("club_zones").update({active:false}).eq("id",z.id),"Зона удалена"))}));
+  $$(".pk-row",m).forEach(row=>row.addEventListener("change",async e=>{const p=S.packages.find(x=>x.id===row.dataset.pk);const t=e.target;let upd=null;
+    if(t.dataset.pf==="pay"||t.dataset.pf==="bonus"){const v=Math.min(12,Math.max(1,Math.round(+t.value||1)));upd={[t.dataset.pf]:v}}
+    else if(t.dataset.pf==="active") upd={active:t.checked};
+    else if(t.hasAttribute("data-pall")) upd={zones:t.checked?[]:S.zones.map(z=>z.id)};
+    else if(t.dataset.pz){const zs=$$("[data-pz]",row).filter(x=>x.checked).map(x=>x.dataset.pz);if(!zs.length){toast("Выберите хотя бы одну зону или «все»");t.checked=true;return}upd={zones:zs}}
+    if(!upd)return; t.blur(); await act(sb.from("club_packages").update(upd).eq("id",p.id),"Акция сохранена")}));
+  $$("[data-pdel]",m).forEach(b=>b.addEventListener("click",()=>{const p=S.packages.find(x=>x.id===b.dataset.pdel);
+    confirmModal(`Удалить акцию ${p.pay}+${p.bonus}?`,"Прошлые брони по ней останутся в отчётах.","Удалить",()=>act(sb.from("club_packages").delete().eq("id",p.id),"Акция удалена"))}));
+  $("#pkAdd").onclick=()=>act(sb.from("club_packages").insert({pay:5,bonus:3}),"Акция 5+3 добавлена, поменяйте цифры при необходимости");
   $("#zAdd").onclick=async()=>{const id="z"+Math.random().toString(36).slice(2,8).replace(/[^a-z0-9]/g,"x");const sort=Math.max(0,...S.allZones.map(z=>z.sort))+1;
     await act(sb.from("club_zones").insert({id,name:"Новая зона",kind:"other",color:KIND.other.c,seats:4,cols:4,price:1000,night:800,specs:"",sort}),"Зона добавлена внизу списка")};
   $("#cfSave").onclick=()=>act(sb.from("club_settings").update({name:$("#cfName").value.trim()||S.club.name,phone:$("#cfPhone").value.trim(),address:$("#cfAddr").value.trim(),hours:$("#cfHours").value.trim(),
