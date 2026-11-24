@@ -245,6 +245,30 @@ td select{padding:6px 8px;border-radius:8px;font-size:13px;width:auto}
 .banner{background:color-mix(in srgb,var(--warn) 14%,var(--panel));border:1px solid color-mix(in srgb,var(--warn) 50%,transparent);border-radius:var(--r-md);padding:14px 16px;margin:16px 0}
 .skeleton{opacity:.5;pointer-events:none}
 .live-tag{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+.hchart{display:flex;align-items:stretch;gap:6px;height:240px;margin-top:14px}
+.hcol{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:flex-end;align-items:center}
+.hcol em{font-style:normal;font-size:12px;font-weight:700;color:var(--muted);margin-bottom:6px;white-space:nowrap}
+.hbar{width:72%;max-width:64px;border-radius:5px 5px 2px 2px}
+.hcol span{font-size:12px;color:var(--dim);margin-top:8px;white-space:nowrap;line-height:1}
+.hcol:hover .hbar{filter:brightness(1.2)}
+.led.later{background:transparent;box-shadow:inset 0 0 0 1.5px var(--zc)}
+.strip .later-note{display:block;font-family:var(--body);font-size:12.5px;font-weight:600;color:var(--zc);text-align:right;margin-top:2px}
+.led-legend{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin-top:4px}
+.led-legend span{display:flex;align-items:center;gap:7px}
+.led-legend i{width:14px;height:10px;border-radius:2px;display:inline-block}
+.promo{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.promo .chip{border-style:dashed}
+.promo .chip b{font-family:var(--display);font-size:14px;color:var(--accent)}
+.sum-line.disc b{color:var(--ok)}
+.total s{font-size:15px;color:var(--dim);font-family:var(--body);font-weight:600;margin-right:8px}
+.pkg-tag{display:inline-block;font-size:11.5px;font-weight:800;color:#14152E;background:var(--ok);border-radius:6px;padding:1px 6px;margin-left:6px;vertical-align:1px}
+.promo-strip{display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:linear-gradient(90deg,color-mix(in srgb,var(--ok) 14%,var(--panel)),var(--panel));border:1px solid color-mix(in srgb,var(--ok) 40%,var(--line));border-radius:var(--r-md);padding:12px 16px;margin-top:14px;font-weight:600}
+.promo-strip b{font-family:var(--display);color:var(--ok)}
+.pk-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--bg-2);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-top:10px}
+.pk-row input[type=number]{width:70px}
+.pk-row .zl{display:flex;flex-wrap:wrap;gap:8px;flex:1;min-width:200px;font-size:13px;color:var(--muted)}
+.pk-row label{display:flex;align-items:center;gap:5px;cursor:pointer}
+.switch{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700}
 </style>
 </head>
 <body>
@@ -263,6 +287,8 @@ td select{padding:6px 8px;border-radius:8px;font-size:13px;width:auto}
       <h1 id="heroTitle">&nbsp;</h1>
       <p class="lead">Каждый огонёк ниже — компьютер. Горит, значит свободен прямо сейчас. Выберите зону и забронируйте места за минуту.</p>
       <div class="strips" id="strips"><div class="strip skeleton"><div class="zname">Загружаем зал…</div></div></div>
+      <div class="promo-strip hidden" id="promoStrip"></div>
+      <div class="led-legend" aria-hidden="true"><span><i style="background:var(--std);box-shadow:0 0 8px var(--std)"></i>свободен</span><span><i style="box-shadow:inset 0 0 0 1.5px var(--std)"></i>свободен, но забронирован на сегодня</span><span><i style="background:#2A2D57"></i>занят</span></div>
     </section>
 
     <section class="block hidden" id="bookSec">
@@ -290,6 +316,7 @@ td select{padding:6px 8px;border-radius:8px;font-size:13px;width:auto}
               <div class="stepper"><button type="button" data-step="count" data-d="-1" aria-label="Меньше мест">−</button><output id="countOut">1</output><button type="button" data-step="count" data-d="1" aria-label="Больше мест">+</button></div>
             </div>
           </div>
+          <div id="promoBox" class="mt hidden"><span class="field-label">Акции: часы в подарок</span><div class="promo" id="promoChips"></div></div>
           <div class="map mt">
             <div class="map-head">
               <b id="mapTitle">Карта зала</b>
@@ -311,6 +338,7 @@ td select{padding:6px 8px;border-radius:8px;font-size:13px;width:auto}
           <div class="sum-line"><span>Места</span><b id="sSeats">—</b></div>
           <div class="sel-list" id="sSelList"></div>
           <div class="sum-line"><span>Тариф</span><b id="sRate">—</b></div>
+          <div class="sum-line disc hidden" id="sDiscLine"><span id="sDiscName">Акция</span><b id="sDisc"></b></div>
           <div class="total"><span class="muted">Итого</span><b class="num" id="sTotal">0 ₸</b></div>
           <label class="field-label" for="cName">Имя</label>
           <input type="text" id="cName" autocomplete="name" placeholder="Например, Владислав" maxlength="40">
@@ -385,10 +413,15 @@ function normPhone(v){let d=String(v||"").replace(/\D/g,"");if(d.length===12&&d[
 function hourIn(ts,tz){try{return +new Intl.DateTimeFormat("en-GB",{hour:"numeric",hourCycle:"h23",timeZone:tz||"Asia/Almaty"}).format(new Date(ts))}catch(e){return new Date(ts).getHours()}}
 function isNight(h,club){const f=club.nightFrom,t=club.nightTo;return f>t?(h>=f||h<t):(h>=f&&h<t)}
 function calcPrice(zone,start,hours,count,club){
-  let sum=0,nH=0,dH=0;
-  for(let h=0;h<hours;h++){const hr=hourIn(start+h*HOUR,club.tz);if(isNight(hr,club)){sum+=zone.night;nH++}else{sum+=zone.price;dH++}}
-  return {total:sum*count,nH,dH};
+  // club.packages: [{pay,bonus,zones}] — лучшая акция применяется автоматически (как на сервере)
+  const h=[];let nH=0,dH=0;
+  for(let i=0;i<hours;i++){const hr=hourIn(start+i*HOUR,club.tz);if(isNight(hr,club)){h.push(zone.night);nH++}else{h.push(zone.price);dH++}}
+  const base=h.reduce((a,b)=>a+b,0);let best=0,pkg=null;
+  (club.packages||[]).forEach(p=>{if(p.active===false)return;if(p.pay+p.bonus>hours)return;if(p.zones&&p.zones.length&&!p.zones.includes(zone.id))return;
+    const d=h.slice(p.pay,p.pay+p.bonus).reduce((a,b)=>a+b,0);if(d>best){best=d;pkg=p}});
+  return {total:(base-best)*count,base:base*count,disc:best*count,pkg:pkg?pkg.pay+"+"+pkg.bonus:"",nH,dH};
 }
+const pkgsFor=(zone,club)=>(club.packages||[]).filter(p=>p.active!==false&&(!p.zones||!p.zones.length||p.zones.includes(zone.id))).sort((a,b)=>(a.pay+a.bonus)-(b.pay+b.bonus));
 function mkCode(){const a="ABCDEFHKMNPRSTXZ";return a[Math.floor(Math.random()*a.length)]+a[Math.floor(Math.random()*a.length)]+"-"+(1000+Math.floor(Math.random()*9000))}
 
 /* storage that never throws */
@@ -437,20 +470,20 @@ function errText(e){
   return "Не получилось: "+m;
 }
 
-window.Club={HOUR,DAY,KIND,STATUS,WD,MON,$,$$,esc,money,pad,dayStart,dayKey,keyToTs,hm,dLabel,plural,normPhone,hourIn,isNight,calcPrice,mkCode,store,openModal,closeModal,modalOpen,confirmModal,toast,sb,configured,errText};
+window.Club={HOUR,DAY,KIND,STATUS,WD,MON,$,$$,esc,money,pad,dayStart,dayKey,keyToTs,hm,dLabel,plural,normPhone,hourIn,isNight,calcPrice,pkgsFor,mkCode,store,openModal,closeModal,modalOpen,confirmModal,toast,sb,configured,errText};
 })();
 </script>
 <script>
 (function(){
 "use strict";
-const {HOUR,DAY,KIND,STATUS,WD,MON,$,$$,esc,money,pad,dayStart,hm,dLabel,plural,normPhone,isNight,hourIn,calcPrice,store,openModal,confirmModal,modalOpen,toast,sb,configured,errText}=Club;
+const {HOUR,DAY,KIND,STATUS,WD,MON,$,$$,esc,money,pad,dayStart,hm,dLabel,plural,normPhone,isNight,hourIn,calcPrice,pkgsFor,store,openModal,confirmModal,modalOpen,toast,sb,configured,errText}=Club;
 const MY_KEY="club-my-bookings";
 
 let P=null; // public state
 const C={zoneId:null,date:dayStart(Date.now()),time:null,hours:2,count:1,selected:[],picked:false};
-let busy=false;
+let busy=false; let pulseT=null;
 
-function club(){return {tz:P.settings.tz,nightFrom:P.settings.night_from,nightTo:P.settings.night_to}}
+function club(){return {tz:P.settings.tz,nightFrom:P.settings.night_from,nightTo:P.settings.night_to,packages:P.packages||[]}}
 const zoneById=id=>P.zones.find(z=>z.id===id);
 const seatList=z=>Array.from({length:z.seats},(_,i)=>i+1);
 function seatState(zid,n,s,e){
@@ -458,7 +491,9 @@ function seatState(zid,n,s,e){
   if(P.busyMap[zid+"-"+n]&&P.busyMap[zid+"-"+n].some(([a,b])=>a<e&&s<b)) return "busy";
   return "free";
 }
-function freeNow(z){const n=Date.now();return seatList(z).filter(x=>seatState(z.id,x,n,n+60e3)==="free")}
+const SOON=30*60e3; // место, бронь на которое начнётся в ближайшие 30 минут, уже не считается свободным
+function freeNow(z){const n=Date.now();return seatList(z).filter(x=>seatState(z.id,x,n,n+SOON)==="free")}
+function laterToday(z){const n=Date.now(),end=dayStart(n)+DAY;return seatList(z).filter(x=>seatState(z.id,x,n,n+SOON)==="free"&&seatState(z.id,x,n,end)==="busy")}
 
 async function load(){
   if(!configured){showBanner("Сайт ещё не подключён к базе: не указан адрес и ключ Supabase.");return}
@@ -467,6 +502,10 @@ async function load(){
   hideBanner();
   data.busyMap={}; data.busy.forEach(([z,n,a,b])=>{(data.busyMap[z+"-"+n]=data.busyMap[z+"-"+n]||[]).push([Date.parse(a),Date.parse(b)])});
   P=data; render();
+}
+function softLoad(){ // не перерисовываем, пока гость выбирает время в списке или открыто окно
+  const a=document.activeElement; if(document.hidden||modalOpen()||busy||(a&&a.tagName==="SELECT")){clearTimeout(pulseT);pulseT=setTimeout(softLoad,3000);return}
+  load();
 }
 function showBanner(t){const b=$("#banner");b.textContent=t;b.classList.remove("hidden")}
 function hideBanner(){$("#banner").classList.add("hidden")}
@@ -479,17 +518,17 @@ function render(){
   $("#fAddr").textContent=st.address; $("#fHours").textContent=st.hours;
   const p=$("#fPhone"); p.textContent=st.phone; p.href="tel:"+String(st.phone).replace(/[^\d+]/g,"");
   $("#shiftPill").classList.toggle("hidden",!P.shift); $("#shiftName").textContent=P.shift||"";
-  renderStrips(); renderBooking(false); renderZonesInfo(); renderMine();
+  renderStrips(); renderPromo(); renderBooking(false); renderZonesInfo(); renderMine();
 }
 function renderStrips(){
   const box=$("#strips"); box.innerHTML="";
   if(!P.zones.length){box.innerHTML=`<div class="card empty">Зоны пока не добавлены.</div>`;return}
   P.zones.forEach(z=>{
-    const free=new Set(freeNow(z));
+    const free=new Set(freeNow(z)); const later=new Set(laterToday(z));
     const btn=document.createElement("button"); btn.type="button"; btn.className="strip"; btn.style.setProperty("--zc",z.color);
     btn.innerHTML=`<div class="zname"><span style="width:10px;height:10px;border-radius:3px;background:${z.color};box-shadow:0 0 8px ${z.color}"></span><div>${esc(z.name)}<small>${money(z.price)} в час</small></div></div>
-      <div class="leds" aria-hidden="true">${seatList(z).map(n=>`<span class="led ${free.has(n)?"on":(seatState(z.id,n,0,1)==="rep"?"rep":"")}"></span>`).join("")}</div>
-      <div class="cnt num">${free.size}<small>из ${z.seats} свободно</small></div>`;
+      <div class="leds" aria-hidden="true">${seatList(z).map(n=>`<span class="led ${later.has(n)?"later":free.has(n)?"on":(seatState(z.id,n,0,1)==="rep"?"rep":"")}"></span>`).join("")}</div>
+      <div class="cnt num">${free.size}<small>из ${z.seats} свободно сейчас</small>${later.size?`<span class="later-note">ещё ${later.size} ${plural(later.size,"забронирован","забронировано","забронировано")} на сегодня</span>`:""}</div>`;
     btn.setAttribute("aria-label",`${z.name}: свободно ${free.size} из ${z.seats}. Перейти к бронированию`);
     btn.addEventListener("click",()=>{C.zoneId=z.id;C.date=dayStart(Date.now());C.time=null;renderBooking(true);$("#bookSec").scrollIntoView({behavior:"smooth"})});
     box.appendChild(btn);
@@ -527,6 +566,8 @@ function renderBooking(repick){
   const g=$("#clientSeats");g.style.setProperty("--cols",z.cols);
   g.innerHTML=seatList(z).map(n=>{const st=seatState(z.id,n,s,e);const sel=C.selected.includes(n);
     return `<button type="button" class="seat ${sel?"sel":st}" data-seat="${n}" style="--zc:${z.color}" ${st!=="free"?"disabled":""} aria-pressed="${sel}" aria-label="Место ${n}, ${st==="free"?(sel?"выбрано":"свободно"):st==="rep"?"на обслуживании":"занято"}"><span class="scr">${n}</span><span class="stand"></span></button>`}).join("");
+  const pk=pkgsFor(z,club());$("#promoBox").classList.toggle("hidden",!pk.length);
+  $("#promoChips").innerHTML=pk.map(p=>{const t=p.pay+p.bonus;return `<button type="button" class="chip" data-pkg="${t}" aria-pressed="${C.hours===t}"><b>${p.pay}+${p.bonus}</b>${t} ${plural(t,"час","часа","часов")} по цене ${p.pay}</button>`}).join("");
   $("#zoneSpecs").innerHTML=String(z.specs||"").split(",").map(x=>x.trim()).filter(Boolean).map(x=>`<span class="spec">${esc(x)}</span>`).join("");
   renderSummary();
 }
@@ -536,16 +577,22 @@ function renderSummary(){
   $("#sSeats").textContent=C.selected.length?`${C.selected.length} ${plural(C.selected.length,"место","места","мест")}`:"не выбраны";
   $("#sSelList").innerHTML=C.selected.slice().sort((a,b)=>a-b).map(n=>`<span>№${n}</span>`).join("");
   $("#sRate").textContent=p.nH&&p.dH?`${p.dH} ч × ${money(z.price)}, ${p.nH} ч × ${money(z.night)}`:p.nH?`${money(z.night)} в час, ночной`:`${money(z.price)} в час`;
-  $("#sTotal").textContent=money(p.total);
+  $("#sDiscLine").classList.toggle("hidden",!p.disc);
+  if(p.disc){$("#sDiscName").textContent=`Акция ${p.pkg}`;$("#sDisc").textContent="−"+money(p.disc)}
+  $("#sTotal").innerHTML=(p.disc?`<s>${money(p.base)}</s>`:"")+money(p.total);
   const btn=$("#bookBtn"); btn.disabled=!C.selected.length||busy;
   btn.textContent=busy?"Оформляем…":C.selected.length?`Забронировать за ${money(p.total)}`:"Выберите места на карте";
+}
+function renderPromo(){
+  const all=(P.packages||[]);const el=$("#promoStrip");el.classList.toggle("hidden",!all.length);
+  el.innerHTML=all.length?`<span>Акции:</span>${all.map(p=>`<span><b>${p.pay}+${p.bonus}</b> ${p.pay+p.bonus} ${plural(p.pay+p.bonus,"час","часа","часов")} по цене ${p.pay}</span>`).join("")}<span class="muted" style="font-weight:500">применяются автоматически</span>`:"";
 }
 function renderZonesInfo(){
   $("#zonesSec").classList.toggle("hidden",!P.zones.length);
   $("#nightNote").textContent=`Цена за час за одно место. Ночной тариф с ${pad(P.settings.night_from)}:00 до ${pad(P.settings.night_to)}:00.`;
   $("#zonesInfo").innerHTML=P.zones.map(z=>`<div class="zcard" style="--zc:${z.color}"><span class="badge"><i style="background:${z.color}"></i>${KIND[z.kind]?KIND[z.kind].n:""}, ${z.seats} ${plural(z.seats,"место","места","мест")}</span>
     <h3>${esc(z.name)}</h3><div class="muted" style="font-size:14px">${esc(z.specs)}</div>
-    <div class="price">${money(z.price)}<small> в час</small></div><div class="muted" style="font-size:14px">ночью ${money(z.night)} в час</div></div>`).join("");
+    <div class="price">${money(z.price)}<small> в час</small></div><div class="muted" style="font-size:14px">ночью ${money(z.night)} в час</div>${pkgsFor(z,club()).length?`<div style="margin-top:10px">${pkgsFor(z,club()).map(p=>`<span class="pkg-tag" style="margin:0 6px 0 0">${p.pay}+${p.bonus}</span>`).join("")}</div>`:""}</div>`).join("");
 }
 function myList(){try{return JSON.parse(store.get(MY_KEY)||"[]")}catch(e){return[]}}
 async function renderMine(){
@@ -575,6 +622,7 @@ async function submit(){
     <div class="sum-line"><span>Зона</span><b>${esc(z.name)}</b></div>
     <div class="sum-line"><span>Места</span><b>${seats.map(n=>"№"+n).join(", ")}</b></div>
     <div class="sum-line"><span>Время</span><b>${dLabel(s)}, ${hm(s)}–${hm(e)}</b></div>
+    ${data.package?`<div class="sum-line disc"><span>Акция</span><b>${esc(data.package)}</b></div>`:""}
     <div class="total"><span class="muted">К оплате на месте</span><b>${money(data.total)}</b></div>
     <button class="btn block" data-close type="button">Готово</button>`);
   C.selected=[];C.picked=false;store.set("club-last-name",name);store.set("club-last-phone",phone);
@@ -584,6 +632,7 @@ function bind(){
   $("#zoneChips").addEventListener("click",e=>{const b=e.target.closest("[data-zone]");if(!b)return;C.zoneId=b.dataset.zone;C.selected=[];renderBooking(true)});
   $("#dateChips").addEventListener("click",e=>{const b=e.target.closest("[data-date]");if(!b)return;C.date=+b.dataset.date;C.time=null;renderBooking(true)});
   $("#timeSel").addEventListener("change",e=>{C.time=+e.target.value;renderBooking(false)});
+  $("#promoChips").addEventListener("click",e=>{const b=e.target.closest("[data-pkg]");if(!b)return;C.hours=+b.dataset.pkg;renderBooking(false)});
   $$("[data-step]").forEach(b=>b.addEventListener("click",()=>{const d=+b.dataset.d;
     if(b.dataset.step==="hours"){C.hours=Math.max(1,Math.min(12,C.hours+d));renderBooking(false)}
     else{const z=zoneById(C.zoneId);C.count=Math.max(1,Math.min(z.seats,C.count+d));autoPick(C.count);renderBooking(false)}}));
@@ -599,7 +648,9 @@ function bind(){
   const ph=$("#cPhone");ph.addEventListener("focus",()=>{if(!ph.value)ph.value="+7 "});
   $("#cName").value=store.get("club-last-name")||""; ph.value=store.get("club-last-phone")||"";
   document.addEventListener("visibilitychange",()=>{if(!document.hidden)load()});
-  setInterval(()=>{const a=document.activeElement;if(!modalOpen()&&!busy&&!(a&&/INPUT|SELECT/.test(a.tagName)))load()},30e3);
+  setInterval(softLoad,20e3);
+  // мгновенное обновление: база сообщает о любой новой брони или изменении
+  if(configured){try{sb.channel("club-pulse").on("postgres_changes",{event:"*",schema:"public",table:"club_pulse"},()=>{clearTimeout(pulseT);pulseT=setTimeout(softLoad,400)}).subscribe()}catch(e){}}
 }
 bind(); load();
 })();
